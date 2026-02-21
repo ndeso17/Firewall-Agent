@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AI Adaptive Firewall Rules</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header class="topbar" id="topbar">
+    <div class="left-zone">
+      <button id="search-back" class="icon-btn hidden" title="Kembali"><i class="bi bi-arrow-left"></i></button>
+      <div id="brand" class="brand"><i id="brand-icon" class="bi bi-shield-check"></i> Firewall Agent</div>
+      <input id="search-input" class="search-inline hidden" type="search" placeholder="Search" />
+    </div>
+    <div class="tools">
+      <button id="tool-search" class="icon-btn" title="Cari aplikasi"><i class="bi bi-search"></i></button>
+      <button id="tool-mode" class="icon-btn" title="Mode checkbox"><i class="bi bi-list-check"></i></button>
+      <button id="tool-sort" class="icon-btn" title="Sorting"><i class="bi bi-funnel"></i></button>
+      <button id="tool-menu" class="icon-btn" title="Menu"><i class="bi bi-three-dots-vertical"></i></button>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="profile" id="profile-toggle">
+      <strong>Profile</strong>
+      <span id="profile-current">anlap</span>
+      <span class="spacer"></span>
+      <span>▾</span>
+    </section>
+
+    <section class="filters">
+      <label><input type="radio" name="app-filter" value="all" checked> All</label>
+      <label><input type="radio" name="app-filter" value="core"> Core</label>
+      <label><input type="radio" name="app-filter" value="system"> System</label>
+      <label><input type="radio" name="app-filter" value="user"> User</label>
+    </section>
+
+    <section class="table-wrap">
+      <div class="matrix">
+        <section class="list-head">
+          <div class="app-col">Application</div>
+          <div class="perm-col" title="Lokal"><i class="bi bi-house-door"></i><span>Lokal</span></div>
+          <div class="perm-col" title="WiFi"><i class="bi bi-wifi"></i><span>WiFi</span></div>
+          <div class="perm-col" title="Data Seluler"><i class="bi bi-reception-4"></i><span>Seluler</span></div>
+          <div class="perm-col" title="Roaming"><i class="bi bi-arrow-left-right"></i><span>Roaming</span></div>
+          <div class="perm-col" title="VPN"><i class="bi bi-link-45deg"></i><span>VPN</span></div>
+          <div class="perm-col" title="Bluetooth Tethering"><i class="bi bi-bluetooth"></i><span>BT</span></div>
+          <div class="perm-col" title="Tor"><i class="bi bi-tornado"></i><span>Tor</span></div>
+        </section>
+
+        <section id="app-list" class="app-list"></section>
+      </div>
+    </section>
+  </main>
+
+  <aside id="side-menu" class="side-menu hidden">
+    <div class="side-head">
+      <strong>Menu</strong>
+      <button id="menu-close" class="icon-btn"><i class="bi bi-x-lg"></i></button>
+    </div>
+    <button id="menu-toggle-firewall">Disable Firewall Agent</button>
+    <button id="menu-apply">Apply</button>
+    <button id="menu-view-log">View Log</button>
+    <button id="menu-alerts">ML Alerts</button>
+    <button id="menu-rules">Rules</button>
+    <button id="menu-preferences">Preferences</button>
+    <button id="menu-model-update">Model Update URL</button>
+    <button id="menu-export">Export Config</button>
+    <label class="menu-import">
+      Import Config
+      <input id="menu-import-input" type="file" accept="application/json" hidden />
+    </label>
+    <button id="menu-exit">Exit</button>
+  </aside>
+
+  <div id="profile-menu" class="popup-menu hidden">
+    <button class="popup-item profile-option" data-profile="anlap">anlap</button>
+    <button class="popup-item profile-option" data-profile="Profile 1">Profile 1</button>
+    <button class="popup-item profile-option" data-profile="Profile 2">Profile 2</button>
+    <button class="popup-item profile-option" data-profile="Profile 3">Profile 3</button>
+  </div>
+
+  <div id="mode-menu" class="popup-menu hidden">
+    <button class="popup-item" data-checkbox-mode="allow" data-active="true">
+      <span>Allow selected</span><span class="choice-indicator" aria-hidden="true"></span>
+    </button>
+    <button class="popup-item" data-checkbox-mode="blocked" data-active="false">
+      <span>Block selected</span><span class="choice-indicator" aria-hidden="true"></span>
+    </button>
+  </div>
+
+  <div id="sort-menu" class="popup-menu hidden">
+    <button class="popup-item" data-sort="name" data-active="true">
+      <span>By name (default)</span><span class="choice-indicator" aria-hidden="true"></span>
+    </button>
+    <button class="popup-item" data-sort="install_date" data-active="false">
+      <span>By install/update</span><span class="choice-indicator" aria-hidden="true"></span>
+    </button>
+    <button class="popup-item" data-sort="uid" data-active="false">
+      <span>By UID</span><span class="choice-indicator" aria-hidden="true"></span>
+    </button>
+  </div>
+
+  <div id="menu-backdrop" class="menu-backdrop hidden"></div>
+
+  <div id="dialog-backdrop" class="dialog-backdrop hidden"></div>
+  <section id="dialog" class="dialog hidden">
+    <h3 id="dialog-title">Status</h3>
+    <pre id="dialog-body"></pre>
+    <div id="dialog-actions" class="dialog-actions"></div>
+  </section>
+
+  <script src="./ksu_bridge.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

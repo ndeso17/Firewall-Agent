@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Firewall Agent - Alerts</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><i class="bi bi-bell"></i> ML Alerts</div>
+    <div class="tools">
+      <button id="back" class="icon-btn" title="Back"><i class="bi bi-arrow-left"></i></button>
+      <button id="refresh" class="icon-btn" title="Refresh"><i class="bi bi-arrow-clockwise"></i></button>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="panel">
+      <div class="toolbar-row">
+        <input id="alert-search" type="search" placeholder="Cari incident / malware type..." />
+      </div>
+      <div id="alerts-list" class="alerts-list">loading...</div>
+    </section>
+  </main>
+
+  <script src="./ksu_bridge.js"></script>
+  <script>
+    function safe(v) { return String(v ?? "-"); }
+    let lastIncidents = { incidents: [], pending: [], actions: [] };
+
+    function classifyThreat(it) {
+      const text = `${safe(it.reason)} ${safe(it.inference_reason)} ${safe(it.planned_action)} ${safe(it.decision)}`.toLowerCase();
+      if (text.includes("trojan")) return { label: "Trojan", level: "malware", desc: "Aplikasi terindikasi perilaku trojan." };
+      if (text.includes("spy") || text.includes("keylog")) return { label: "Spyware", level: "malware", desc: "Perilaku mengintip data pengguna." };
+      if (text.includes("ransom")) return { label: "Ransomware", level: "malware", desc: "Terindikasi pola pemerasan/enkripsi berbahaya." };
+      if (text.includes("worm") || text.includes("virus")) return { label: "Virus/Worm", level: "malware", desc: "Pola penyebaran otomatis terdeteksi." };
+      if (text.includes("phish")) return { label: "Phishing", level: "medium", desc: "Aktivitas menyerupai phishing atau social engineering." };
+      return { label: "Suspicious Activity", level: "medium", desc: "Aktivitas jaringan mencurigakan, potensi malware." };
+    }
+
+    async function runAction(cmd, id) {
+      const el = document.getElementById("alerts-list");
+      try {
+        const out = await window.KSUBridge.runScript("webroot/api/action.sh", `cmd=${encodeURIComponent(cmd)}&id=${encodeURIComponent(id)}`);
+        el.innerHTML = `<pre>action(${cmd}) ${id}: ${out}</pre>` + el.innerHTML;
+        await loadAlerts();
+      } catch (e) {
+        el.innerHTML = `<pre>error action: ${e}</pre>`;
+      }
+    }
+
+    function render(data) {
+      const incidents = Array.isArray(data.incidents) ? data.incidents : [];
+      const pending = Array.isArray(data.pending) ? data.pending : [];
+      const actions = Array.isArray(data.actions) ? data.actions : [];
+      const pendingMap = new Map(pending.map((p) => [p.incident_id, p]));
+      const actionMap = new Map(actions.map((a) => [a.incident_id, a]));
+      const list = document.getElementById("alerts-list");
+
+      const q = (document.getElementById("alert-search").value || "").toLowerCase().trim();
+      const filtered = incidents.filter((it) => {
+        if (!q) return true;
+        return JSON.stringify(it).toLowerCase().includes(q);
+      });
+
+      if (!filtered.length) {
+        list.innerHTML = "<pre>No suspicious activity yet.</pre>";
+        return;
+      }
+
+      list.innerHTML = filtered.map((it, idx) => {
+        const id = safe(it.incident_id);
+        const mode = safe(it.mode);
+        const score = safe(it.score);
+        const uid = safe(it.uid);
+        const appName = safe(it.app_name);
+        const appPkg = safe(it.app_pkg);
+        const netSource = safe(it.net_source);
+        const netSrc = safe(it.net_src);
+        const netDst = safe(it.net_dst);
+        const netProto = safe(it.net_proto);
+        const netDport = safe(it.net_dport);
+        const decision = safe(it.decision);
+        const planned = safe(it.planned_action);
+        const p = pendingMap.get(id);
+        const a = actionMap.get(id);
+        const threat = classifyThreat(it);
+        let modeDetail = "";
+        let actionsHtml = "";
+
+        if (mode === "audit") {
+          modeDetail = "Audit: ML memberi alert, eksekusi manual oleh user.";
+          actionsHtml = `<button data-cmd="approve" data-id="${id}">Execute Block</button>`;
+        } else if (mode === "safe") {
+          if (p && p.status === "pending") {
+            modeDetail = `Safe: menunggu keputusan user. Aksi ML: ${safe(p.planned_action)}.`;
+            actionsHtml = `<button data-cmd="approve" data-id="${id}">Accept</button> <button data-cmd="reject" data-id="${id}">Reject</button>`;
+          } else {
+            modeDetail = `Safe: resolved (${safe(p ? p.status : "none")}).`;
+          }
+        } else if (mode === "enforce") {
+          modeDetail = a ? `Enforce: sudah dieksekusi ML (${safe(a.action)} / ${safe(a.source)}).` : "Enforce: action log belum ditemukan.";
+        }
+
+        return `
+          <article class="alert-card">
+            <div class="alert-title">[${idx + 1}] ${id}</div>
+            <div class="chip-row">
+              <span class="chip ${threat.level}">${threat.label}</span>
+              <span class="chip">mode: ${mode}</span>
+              <span class="chip">uid: ${uid}</span>
+              <span class="chip">score: ${score}</span>
+            </div>
+            <div class="muted"><strong>Aplikasi:</strong> ${appName !== "-" ? appName : "Tidak diketahui"} ${appPkg !== "-" ? `(${appPkg})` : ""}</div>
+            <div class="muted"><strong>Jaringan:</strong> ${netProto.toUpperCase()} ${netSrc} → ${netDst}${netDport !== "0" ? `:${netDport}` : ""} <span class="hint">(source: ${netSource})</span></div>
+            <div class="muted">${threat.desc}</div>
+            <div class="muted">Decision: ${decision} | Planned: ${planned}</div>
+            ${uid === "-" ? '<div class="hint">UID belum bisa diidentifikasi pada kernel/perangkat ini, jadi aplikasi spesifik belum terpetakan.</div>' : ""}
+            <div class="muted">${modeDetail}</div>
+            <div class="alert-actions">${actionsHtml}</div>
+          </article>
+        `;
+      }).join("");
+    }
+
+    async function loadAlerts() {
+      const el = document.getElementById("alerts-list");
+      try {
+        const txt = await window.KSUBridge.runScript("webroot/api/alerts_feed.sh");
+        const data = JSON.parse(txt);
+        lastIncidents = data;
+        render(data);
+      } catch (e) {
+        el.textContent = `error: ${e}`;
+      }
+    }
+
+    document.getElementById("refresh").addEventListener("click", loadAlerts);
+    document.getElementById("alert-search").addEventListener("input", () => render(lastIncidents));
+    document.getElementById("back").addEventListener("click", () => history.back());
+    document.getElementById("alerts-list").addEventListener("click", async (e) => {
+      const btn = e.target.closest("button[data-cmd][data-id]");
+      if (!btn) return;
+      await runAction(btn.dataset.cmd, btn.dataset.id);
+    });
+
+    loadAlerts();
+  </script>
+</body>
+</html>

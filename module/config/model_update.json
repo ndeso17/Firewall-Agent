@@ -1,0 +1,7 @@
+{
+  "manifest_url": "",
+  "onnx_url": "",
+  "channel": "stable",
+  "auto_update": false,
+  "check_interval_minutes": 60
+}

@@ -1,0 +1,238 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true"
+    android:background="#252525">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:background="#1FA122"
+            android:gravity="center_vertical"
+            android:paddingHorizontal="16dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Preferences"
+                android:textColor="#FFFFFF"
+                android:textSize="24sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="UI Preferences"
+                android:textColor="#F9FAFB"
+                android:textSize="26sp"
+                android:textStyle="bold" />
+
+            <CheckBox
+                android:id="@+id/uiNotification"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Enable Notification"
+                android:textColor="#E5E7EB" />
+
+            <CheckBox
+                android:id="@+id/uiRulesProgress"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Rules Progress"
+                android:textColor="#E5E7EB" />
+
+            <CheckBox
+                android:id="@+id/uiConfirmFirewall"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Confirm Firewall Agent"
+                android:textColor="#E5E7EB" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Perilaku daftar hitam default"
+                android:textColor="#E5E7EB" />
+
+            <Spinner
+                android:id="@+id/blacklistSpinner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:entries="@array/allow_block" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Perilaku daftar putih default"
+                android:textColor="#E5E7EB" />
+
+            <Spinner
+                android:id="@+id/whitelistSpinner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:entries="@array/allow_block" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="Log"
+                android:textColor="#F9FAFB"
+                android:textSize="26sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Log target"
+                android:textColor="#E5E7EB" />
+
+            <Spinner
+                android:id="@+id/logTargetSpinner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:entries="@array/log_targets" />
+
+            <CheckBox
+                android:id="@+id/logService"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Turn on log service"
+                android:textColor="#E5E7EB" />
+
+            <CheckBox
+                android:id="@+id/logHostname"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Show hostname"
+                android:textColor="#E5E7EB" />
+
+            <EditText
+                android:id="@+id/logPingTimeout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Ping timeout"
+                android:inputType="number"
+                android:textColor="#ECEFF4"
+                android:textColorHint="#9CA3AF" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="Firewall Engine"
+                android:textColor="#F9FAFB"
+                android:textSize="26sp"
+                android:textStyle="bold" />
+
+            <Spinner
+                android:id="@+id/modeSpinner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:entries="@array/modes" />
+
+            <EditText
+                android:id="@+id/thresholdInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Threshold (0-1)"
+                android:inputType="numberDecimal"
+                android:textColor="#ECEFF4"
+                android:textColorHint="#9CA3AF" />
+
+            <EditText
+                android:id="@+id/uncertainMarginInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Uncertain Margin (0-1)"
+                android:inputType="numberDecimal"
+                android:textColor="#ECEFF4"
+                android:textColorHint="#9CA3AF" />
+
+            <EditText
+                android:id="@+id/cooldownInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Cooldown (seconds)"
+                android:inputType="number"
+                android:textColor="#ECEFF4"
+                android:textColorHint="#9CA3AF" />
+
+            <EditText
+                android:id="@+id/ttlInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Block TTL (seconds)"
+                android:inputType="number"
+                android:textColor="#ECEFF4"
+                android:textColorHint="#9CA3AF" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="Bahasa"
+                android:textColor="#F9FAFB"
+                android:textSize="26sp"
+                android:textStyle="bold" />
+
+            <Spinner
+                android:id="@+id/languageSpinner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:entries="@array/languages" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/reloadBtn"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Reload"
+                    android:textAllCaps="false" />
+
+                <Space
+                    android:layout_width="8dp"
+                    android:layout_height="1dp" />
+
+                <Button
+                    android:id="@+id/saveBtn"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Save Preferences"
+                    android:textAllCaps="false" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/outputText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:background="#111111"
+                android:padding="10dp"
+                android:textColor="#D1D5DB"
+                android:textSize="12sp"
+                android:typeface="monospace" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

@@ -1,0 +1,9 @@
+{
+  "mode": "audit",
+  "malicious_threshold": 0.8,
+  "uncertain_margin": 0.1,
+  "cooldown_seconds": 120,
+  "block_ttl_seconds": 1800,
+  "allowlist_uids": [0, 1000],
+  "loop_interval_seconds": 10
+}

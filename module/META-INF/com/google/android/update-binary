@@ -1,0 +1,24 @@
+#!/sbin/sh
+
+umask 022
+OUTFD="$2"
+ZIPFILE="$3"
+
+ui_print() {
+  echo -e "ui_print $1\nui_print" > /proc/self/fd/"$OUTFD"
+}
+
+mount /data 2>/dev/null
+
+if [ -f /data/adb/magisk/util_functions.sh ]; then
+  . /data/adb/magisk/util_functions.sh
+elif [ -f /data/adb/ksu/util_functions.sh ]; then
+  . /data/adb/ksu/util_functions.sh
+else
+  ui_print "! Magisk/KSU util_functions.sh not found"
+  ui_print "! Install from Magisk app or KernelSU manager."
+  exit 1
+fi
+
+install_module
+exit 0

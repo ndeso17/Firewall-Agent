@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Firewall Agent - Preferences</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><i class="bi bi-gear"></i> Preferences</div>
+    <div class="tools">
+      <button id="back" class="icon-btn" title="Back"><i class="bi bi-arrow-left"></i></button>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="prefs-grid">
+      <article class="prefs-card">
+        <h2>UI Preferences</h2>
+        <div class="checkline"><input id="ui-enable-notification" type="checkbox"><span>Enable Notification</span></div>
+        <div class="checkline"><input id="ui-rules-progress" type="checkbox"><span>Rules Progress</span></div>
+        <div class="checkline"><input id="ui-confirm-firewall" type="checkbox"><span>Confirm Firewall Agent</span></div>
+        <div class="field">
+          <label for="ui-blacklist-default">Perilaku daftar hitam default</label>
+          <select id="ui-blacklist-default"><option value="block">Block</option><option value="allow">Allow</option></select>
+        </div>
+        <div class="field">
+          <label for="ui-whitelist-default">Perilaku daftar putih default</label>
+          <select id="ui-whitelist-default"><option value="allow">Allow</option><option value="block">Block</option></select>
+        </div>
+      </article>
+
+      <article class="prefs-card">
+        <h2>Log</h2>
+        <div class="field">
+          <label for="log-target">Log target</label>
+          <select id="log-target"><option value="NFLOG">NFLOG</option><option value="LOG">LOG</option><option value="ULOG">ULOG</option><option value="NONE">NONE</option></select>
+        </div>
+        <div class="checkline"><input id="log-service" type="checkbox"><span>Turn on log service</span></div>
+        <div class="checkline"><input id="log-show-hostname" type="checkbox"><span>Show hostname</span></div>
+        <div class="field">
+          <label for="log-ping-timeout">Ping timeout</label>
+          <input id="log-ping-timeout" type="number" min="1" step="1" />
+        </div>
+      </article>
+
+      <article class="prefs-card">
+        <h2>Profiles</h2>
+        <div class="field">
+          <label for="profiles-active">Active profile</label>
+          <select id="profiles-active"></select>
+        </div>
+        <div class="row">
+          <input id="profiles-new-name" type="text" placeholder="Nama profil baru..." />
+          <button id="profiles-add" type="button">Add</button>
+          <button id="profiles-remove" type="button">Remove</button>
+        </div>
+        <div id="profiles-list" class="mini-list"></div>
+      </article>
+
+      <article class="prefs-card">
+        <h2>Bahasa</h2>
+        <div class="field">
+          <label for="language">Pilih bahasa</label>
+          <select id="language"><option value="id">Indonesia</option><option value="en">Inggris</option><option value="ko">Korea</option></select>
+        </div>
+      </article>
+
+      <article class="prefs-card">
+        <h2>Firewall Engine</h2>
+        <div class="field">
+          <label for="pref-mode">Mode</label>
+          <select id="pref-mode"><option value="audit">Audit</option><option value="safe">Safe</option><option value="enforce">Enforce</option></select>
+        </div>
+        <div class="field"><label for="pref-threshold">Threshold</label><input id="pref-threshold" type="number" min="0" max="1" step="0.01" /></div>
+        <div class="field"><label for="pref-uncertain-margin">Uncertain Margin</label><input id="pref-uncertain-margin" type="number" min="0" max="1" step="0.01" /></div>
+        <div class="field"><label for="pref-cooldown">Cooldown (seconds)</label><input id="pref-cooldown" type="number" min="0" step="1" /></div>
+        <div class="field"><label for="pref-ttl">Block TTL (seconds)</label><input id="pref-ttl" type="number" min="0" step="1" /></div>
+      </article>
+
+      <article class="prefs-card prefs-actions">
+        <h2>Actions</h2>
+        <div class="row"><button id="load" type="button">Reload</button><button id="save" type="button">Save Preferences</button></div>
+        <pre id="pref-output">loading preferences...</pre>
+      </article>
+    </section>
+  </main>
+
+  <script src="./ksu_bridge.js"></script>
+  <script>
+    const LOCAL_PREF_KEY = "ai_firewall_preferences_v2";
+    const DEFAULT_PREFS = { mode:"audit", malicious_threshold:0.8, uncertain_margin:0.1, cooldown_seconds:120, block_ttl_seconds:1800, ui_enable_notification:true, ui_rules_progress:true, ui_confirm_firewall:true, ui_blacklist_default:"block", ui_whitelist_default:"allow", log_target:"NFLOG", log_service:false, log_show_hostname:false, log_ping_timeout:15, profiles:["default","gaming","work"], active_profile:"default", language:"id" };
+    const byId = (id) => document.getElementById(id);
+    const asBool = (v) => v === true || v === "true" || v === 1 || v === "1";
+    const toNum = (v, f) => Number.isFinite(Number(v)) ? Number(v) : f;
+
+    function saveLocalPrefs(p) { localStorage.setItem(LOCAL_PREF_KEY, JSON.stringify(p)); }
+    function getLocalPrefs() { try { return { ...DEFAULT_PREFS, ...(JSON.parse(localStorage.getItem(LOCAL_PREF_KEY) || "{}")) }; } catch { return { ...DEFAULT_PREFS }; } }
+
+    function renderProfiles(profiles, activeProfile) {
+      const sel = byId("profiles-active");
+      sel.innerHTML = "";
+      profiles.forEach((name) => {
+        const opt = document.createElement("option");
+        opt.value = name;
+        opt.textContent = name;
+        if (name === activeProfile) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      byId("profiles-list").textContent = profiles.join(", ");
+    }
+
+    function fillForm(p) {
+      byId("pref-mode").value = p.mode;
+      byId("pref-threshold").value = p.malicious_threshold;
+      byId("pref-uncertain-margin").value = p.uncertain_margin ?? 0.1;
+      byId("pref-cooldown").value = p.cooldown_seconds;
+      byId("pref-ttl").value = p.block_ttl_seconds;
+      byId("ui-enable-notification").checked = asBool(p.ui_enable_notification);
+      byId("ui-rules-progress").checked = asBool(p.ui_rules_progress);
+      byId("ui-confirm-firewall").checked = asBool(p.ui_confirm_firewall);
+      byId("ui-blacklist-default").value = p.ui_blacklist_default || "block";
+      byId("ui-whitelist-default").value = p.ui_whitelist_default || "allow";
+      byId("log-target").value = p.log_target || "NFLOG";
+      byId("log-service").checked = asBool(p.log_service);
+      byId("log-show-hostname").checked = asBool(p.log_show_hostname);
+      byId("log-ping-timeout").value = p.log_ping_timeout ?? 15;
+      byId("language").value = p.language || "id";
+      renderProfiles(p.profiles || ["default"], p.active_profile || "default");
+    }
+
+    function collectForm() {
+      const profiles = Array.from(byId("profiles-active").options).map((o) => o.value);
+      return {
+        mode: byId("pref-mode").value,
+        malicious_threshold: toNum(byId("pref-threshold").value, 0.8),
+        uncertain_margin: toNum(byId("pref-uncertain-margin").value, 0.1),
+        cooldown_seconds: toNum(byId("pref-cooldown").value, 120),
+        block_ttl_seconds: toNum(byId("pref-ttl").value, 1800),
+        ui_enable_notification: byId("ui-enable-notification").checked,
+        ui_rules_progress: byId("ui-rules-progress").checked,
+        ui_confirm_firewall: byId("ui-confirm-firewall").checked,
+        ui_blacklist_default: byId("ui-blacklist-default").value,
+        ui_whitelist_default: byId("ui-whitelist-default").value,
+        log_target: byId("log-target").value,
+        log_service: byId("log-service").checked,
+        log_show_hostname: byId("log-show-hostname").checked,
+        log_ping_timeout: toNum(byId("log-ping-timeout").value, 15),
+        profiles,
+        active_profile: byId("profiles-active").value || (profiles[0] || "default"),
+        language: byId("language").value
+      };
+    }
+
+    async function loadPrefs() {
+      const out = byId("pref-output");
+      try {
+        const txt = await window.KSUBridge.runScript("webroot/api/get_preferences.sh");
+        const prefs = { ...DEFAULT_PREFS, ...JSON.parse(txt) };
+        fillForm(prefs);
+        saveLocalPrefs(prefs);
+        out.textContent = "Loaded from API.";
+      } catch (e) {
+        const prefs = getLocalPrefs();
+        fillForm(prefs);
+        out.textContent = `API unavailable, loaded local preferences. (${e.message})`;
+      }
+    }
+
+    async function savePrefs() {
+      const prefs = collectForm();
+      saveLocalPrefs(prefs);
+      const out = byId("pref-output");
+      const q = new URLSearchParams({
+        mode: prefs.mode,
+        threshold: String(prefs.malicious_threshold),
+        uncertain_margin: String(prefs.uncertain_margin),
+        cooldown: String(prefs.cooldown_seconds),
+        ttl: String(prefs.block_ttl_seconds),
+        ui_enable_notification: String(prefs.ui_enable_notification),
+        ui_rules_progress: String(prefs.ui_rules_progress),
+        ui_confirm_firewall: String(prefs.ui_confirm_firewall),
+        ui_blacklist_default: prefs.ui_blacklist_default,
+        ui_whitelist_default: prefs.ui_whitelist_default,
+        log_target: prefs.log_target,
+        log_service: String(prefs.log_service),
+        log_show_hostname: String(prefs.log_show_hostname),
+        log_ping_timeout: String(prefs.log_ping_timeout),
+        profiles: prefs.profiles.join(","),
+        active_profile: prefs.active_profile,
+        language: prefs.language
+      }).toString();
+      try {
+        const txt = await window.KSUBridge.runScript("webroot/api/set_preferences.sh", q);
+        out.textContent = txt || "preferences saved";
+      } catch (e) {
+        out.textContent = `Saved locally only. API unavailable (${e.message}).`;
+      }
+    }
+
+    byId("profiles-add").addEventListener("click", () => {
+      const input = byId("profiles-new-name");
+      const name = input.value.trim();
+      if (!name) return;
+      const sel = byId("profiles-active");
+      const exists = Array.from(sel.options).some((o) => o.value === name);
+      if (exists) return;
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      sel.appendChild(opt);
+      sel.value = name;
+      input.value = "";
+      renderProfiles(Array.from(sel.options).map((o) => o.value), sel.value);
+    });
+
+    byId("profiles-remove").addEventListener("click", () => {
+      const sel = byId("profiles-active");
+      if (sel.options.length <= 1) return;
+      sel.remove(sel.selectedIndex);
+      sel.selectedIndex = 0;
+      renderProfiles(Array.from(sel.options).map((o) => o.value), sel.value);
+    });
+
+    byId("back").addEventListener("click", () => history.back());
+    byId("load").addEventListener("click", loadPrefs);
+    byId("save").addEventListener("click", savePrefs);
+    loadPrefs();
+  </script>
+</body>
+</html>

@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#252525"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:background="#1FA122"
+            android:gravity="center_vertical"
+            android:paddingHorizontal="16dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Traffic Monitor"
+                android:textColor="#FFFFFF"
+                android:textSize="24sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Pilih source trafik"
+                android:textColor="#D1D5DB"
+                android:textSize="12sp" />
+
+            <Spinner
+                android:id="@+id/sourceSpinner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:background="#111111"
+                android:popupBackground="#111111" />
+
+            <com.mrksvt.firewallagent.TrafficChartView
+                android:id="@+id/trafficChart"
+                android:layout_width="match_parent"
+                android:layout_height="170dp"
+                android:layout_marginTop="6dp"
+                android:background="#111827" />
+
+            <TextView
+                android:id="@+id/totalText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:background="#111111"
+                android:padding="10dp"
+                android:text="RX: - | TX: -"
+                android:textColor="#F9FAFB"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/refreshBtn"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Refresh"
+                android:textAllCaps="false" />
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/perAppRecycler"
+                android:layout_width="match_parent"
+                android:layout_height="360dp"
+                android:layout_marginTop="8dp"
+                android:background="#111111"
+                android:padding="8dp" />
+
+            <TextView
+                android:id="@+id/perAppEmpty"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="#111111"
+                android:padding="10dp"
+                android:text="Belum ada data aplikasi yang sedang konsumsi internet."
+                android:textColor="#9CA3AF"
+                android:textSize="12sp"
+                android:visibility="gone" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

@@ -1,0 +1,269 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#252525">
+
+<LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="60dp"
+        android:background="#1FA122"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="12dp">
+
+        <ImageButton
+            android:id="@+id/searchBackBtn"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:background="@android:color/transparent"
+            android:contentDescription="Back"
+            android:src="@drawable/ic_toolbar_back"
+            android:tint="#EAF8EA"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/titleText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Firewall Agent"
+            android:textColor="#FFFFFF"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <EditText
+            android:id="@+id/searchTopInput"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:hint="Search"
+            android:inputType="text"
+            android:textColor="#F3F8F3"
+            android:textColorHint="#B9DDBA"
+            android:visibility="gone" />
+
+        <ImageButton
+            android:id="@+id/toolSearchBtn"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@android:color/transparent"
+            android:contentDescription="Search"
+            android:src="@drawable/ic_toolbar_search"
+            android:tint="#EAF8EA" />
+
+        <ImageButton
+            android:id="@+id/toolModeBtn"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@android:color/transparent"
+            android:contentDescription="Mode"
+            android:src="@drawable/ic_toolbar_mode"
+            android:tint="#EAF8EA" />
+
+        <ImageButton
+            android:id="@+id/toolSortBtn"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@android:color/transparent"
+            android:contentDescription="Sort"
+            android:src="@drawable/ic_toolbar_sort"
+            android:tint="#EAF8EA" />
+
+        <ImageButton
+            android:id="@+id/toolMenuBtn"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@android:color/transparent"
+            android:contentDescription="Menu"
+            android:src="@drawable/ic_toolbar_more"
+            android:tint="#EAF8EA" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingHorizontal="12dp"
+        android:paddingTop="8dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Profile"
+            android:textColor="#F3F4F6"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <Spinner
+            android:id="@+id/profileSpinner"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:entries="@array/profiles" />
+    </LinearLayout>
+
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:fillViewport="false"
+        android:scrollbars="none">
+
+        <RadioGroup
+            android:id="@+id/filterGroup"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingHorizontal="12dp"
+            android:paddingTop="8dp">
+
+            <RadioButton
+                android:id="@+id/filterAll"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checked="true"
+                android:maxLines="1"
+                android:singleLine="true"
+                android:textAllCaps="false"
+                android:text="All"
+                android:textColor="#E5E7EB"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/filterCore"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:maxLines="1"
+                android:singleLine="true"
+                android:textAllCaps="false"
+                android:text="Core"
+                android:textColor="#E5E7EB"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/filterSystem"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:maxLines="1"
+                android:singleLine="true"
+                android:textAllCaps="false"
+                android:text="System"
+                android:textColor="#E5E7EB"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/filterUser"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:maxLines="1"
+                android:singleLine="true"
+                android:textAllCaps="false"
+                android:text="User"
+                android:textColor="#E5E7EB"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/filterProtected"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:maxLines="1"
+                android:singleLine="true"
+                android:textAllCaps="false"
+                android:text="Protected"
+                android:textColor="#E5E7EB"
+                android:textSize="14sp" />
+        </RadioGroup>
+    </HorizontalScrollView>
+
+    <HorizontalScrollView
+        android:id="@+id/appsScroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:descendantFocusability="blocksDescendants"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_marginTop="8dp"
+                android:text="Application"
+                android:textColor="#D1D5DB"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="8dp">
+
+                <Space
+                    android:layout_width="52dp"
+                    android:layout_height="1dp" />
+
+                <ImageView android:layout_width="58dp" android:layout_height="20dp" android:layout_gravity="center_vertical" android:scaleType="centerInside" android:src="@drawable/ic_col_local" android:tint="#D1D5DB" />
+                <ImageView android:layout_width="58dp" android:layout_height="20dp" android:layout_gravity="center_vertical" android:scaleType="centerInside" android:src="@drawable/ic_col_wifi" android:tint="#D1D5DB" />
+                <ImageView android:id="@+id/colCellIcon" android:layout_width="58dp" android:layout_height="20dp" android:layout_gravity="center_vertical" android:scaleType="centerInside" android:src="@drawable/ic_cell_lte" android:tint="#D1D5DB" />
+                <ImageView android:layout_width="58dp" android:layout_height="20dp" android:layout_gravity="center_vertical" android:scaleType="centerInside" android:src="@drawable/ic_col_roaming" android:tint="#D1D5DB" />
+                <ImageView android:layout_width="58dp" android:layout_height="20dp" android:layout_gravity="center_vertical" android:scaleType="centerInside" android:src="@drawable/ic_col_vpn" android:tint="#D1D5DB" />
+                <ImageView android:layout_width="58dp" android:layout_height="20dp" android:layout_gravity="center_vertical" android:scaleType="centerInside" android:src="@drawable/ic_col_bt" android:tint="#D1D5DB" />
+                <ImageView android:layout_width="58dp" android:layout_height="20dp" android:layout_gravity="center_vertical" android:scaleType="centerInside" android:src="@drawable/ic_col_tor" android:tint="#D1D5DB" />
+                <ImageView android:layout_width="58dp" android:layout_height="20dp" android:layout_gravity="center_vertical" android:scaleType="centerInside" android:src="@drawable/ic_download_20" android:tint="#D1D5DB" />
+                <ImageView android:layout_width="58dp" android:layout_height="20dp" android:layout_gravity="center_vertical" android:scaleType="centerInside" android:src="@drawable/ic_upload_20" android:tint="#D1D5DB" />
+            </LinearLayout>
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/appsRecycler"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:paddingBottom="8dp" />
+        </LinearLayout>
+    </HorizontalScrollView>
+
+    <ProgressBar
+        android:id="@+id/progress"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:indeterminate="true"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/outputText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="44dp"
+        android:background="#111111"
+        android:padding="10dp"
+        android:maxLines="2"
+        android:ellipsize="end"
+        android:textColor="#D1D5DB"
+        android:textIsSelectable="true"
+        android:textSize="12sp"
+        android:typeface="monospace"
+        android:visibility="gone" />
+</LinearLayout>
+
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/statusFab"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="18dp"
+        android:contentDescription="Firewall status"
+        app:backgroundTint="#1FA122"
+        app:srcCompat="@drawable/ic_status_unknown"
+        app:tint="#FFFFFF" />
+</FrameLayout>

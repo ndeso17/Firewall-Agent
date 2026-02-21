@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Firewall Agent - Model Update</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><i class="bi bi-cloud-arrow-down"></i> Model Update URL</div>
+    <div class="tools"><button id="back" class="icon-btn" title="Back"><i class="bi bi-arrow-left"></i></button></div>
+  </header>
+
+  <main class="page">
+    <section class="prefs-grid">
+      <article class="prefs-card">
+        <h2>Source</h2>
+        <div class="field">
+          <label for="manifest-url">Manifest URL</label>
+          <input id="manifest-url" type="url" placeholder="https://example.com/release_manifest.json" />
+        </div>
+        <div class="field">
+          <label for="onnx-url">ONNX URL (opsional direct)</label>
+          <input id="onnx-url" type="url" placeholder="https://example.com/firewall_brain.onnx" />
+        </div>
+        <div class="field">
+          <label for="channel">Current channel</label>
+          <select id="channel"><option value="stable">stable</option><option value="beta">beta</option><option value="dev">dev</option></select>
+        </div>
+      </article>
+
+      <article class="prefs-card">
+        <h2>Scheduler</h2>
+        <div class="checkline"><input id="auto-update" type="checkbox"><span>Auto check update</span></div>
+        <div class="field">
+          <label for="check-interval">Check interval (minutes)</label>
+          <input id="check-interval" type="number" min="5" step="1" />
+        </div>
+      </article>
+
+      <article class="prefs-card prefs-actions">
+        <h2>Actions</h2>
+        <div class="row"><button id="load" type="button">Reload</button><button id="save" type="button">Save</button></div>
+        <pre id="output">loading...</pre>
+      </article>
+    </section>
+  </main>
+
+  <script src="./ksu_bridge.js"></script>
+  <script>
+    const DEFAULTS = { manifest_url:"", onnx_url:"", channel:"stable", auto_update:false, check_interval_minutes:60 };
+    const LOCAL_KEY = "ai_firewall_model_update_v1";
+    const byId = (id) => document.getElementById(id);
+
+    function saveLocal(data) { localStorage.setItem(LOCAL_KEY, JSON.stringify(data)); }
+    function loadLocal() { try { return { ...DEFAULTS, ...(JSON.parse(localStorage.getItem(LOCAL_KEY) || "{}")) }; } catch { return { ...DEFAULTS }; } }
+
+    function fill(d) {
+      byId("manifest-url").value = d.manifest_url || "";
+      byId("onnx-url").value = d.onnx_url || "";
+      byId("channel").value = d.channel || "stable";
+      byId("auto-update").checked = d.auto_update === true || d.auto_update === "true";
+      byId("check-interval").value = d.check_interval_minutes ?? 60;
+    }
+
+    function collect() {
+      return {
+        manifest_url: byId("manifest-url").value.trim(),
+        onnx_url: byId("onnx-url").value.trim(),
+        channel: byId("channel").value,
+        auto_update: byId("auto-update").checked,
+        check_interval_minutes: Number(byId("check-interval").value || 60)
+      };
+    }
+
+    async function loadRemote() {
+      const out = byId("output");
+      try {
+        const txt = await window.KSUBridge.runScript("webroot/api/get_model_update.sh");
+        const data = JSON.parse(txt);
+        fill(data);
+        saveLocal(data);
+        out.textContent = "Loaded from API.";
+      } catch (e) {
+        const data = loadLocal();
+        fill(data);
+        out.textContent = `API unavailable, loaded local config. (${e.message})`;
+      }
+    }
+
+    async function saveRemote() {
+      const out = byId("output");
+      const data = collect();
+      saveLocal(data);
+      const q = new URLSearchParams({
+        manifest_url: data.manifest_url,
+        onnx_url: data.onnx_url,
+        channel: data.channel,
+        auto_update: String(data.auto_update),
+        check_interval_minutes: String(data.check_interval_minutes)
+      }).toString();
+      try {
+        const txt = await window.KSUBridge.runScript("webroot/api/set_model_update.sh", q);
+        out.textContent = txt || "saved";
+      } catch (e) {
+        out.textContent = `Saved locally only. API unavailable (${e.message}).`;
+      }
+    }
+
+    byId("back").addEventListener("click", () => history.back());
+    byId("load").addEventListener("click", loadRemote);
+    byId("save").addEventListener("click", saveRemote);
+    loadRemote();
+  </script>
+</body>
+</html>

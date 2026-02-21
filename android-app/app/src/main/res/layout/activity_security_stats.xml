@@ -1,0 +1,253 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#22242C">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Security Stats"
+            android:textColor="#E5E7EB"
+            android:textStyle="bold"
+            android:textSize="34sp" />
+
+        <TextView
+            android:id="@+id/lastUpdatedText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Last update: -"
+            android:textColor="#9CA3AF"
+            android:textSize="13sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/refreshBtn"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Refresh"
+                android:textAllCaps="false"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/period24Btn"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="24h"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/period7dBtn"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:text="7d"
+                android:textAllCaps="false" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:orientation="vertical"
+            android:background="#0B1220"
+            android:padding="14dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Malware Detections Trend"
+                android:textColor="#E5E7EB"
+                android:textStyle="bold"
+                android:textSize="18sp" />
+
+            <com.mrksvt.firewallagent.SecurityTrendChartView
+                android:id="@+id/malwareTrendChart"
+                android:layout_width="match_parent"
+                android:layout_height="170dp"
+                android:layout_marginTop="8dp"
+                android:background="#0F172A" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:orientation="vertical"
+            android:background="#0B1220"
+            android:padding="14dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Malware / Virus Detection"
+                android:textColor="#E5E7EB"
+                android:textStyle="bold"
+                android:textSize="18sp" />
+
+            <TextView
+                android:id="@+id/malwareSummaryText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="Loading..."
+                android:textColor="#D1D5DB"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/malwareLogText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="#0A0A0A"
+                android:padding="10dp"
+                android:text="-"
+                android:textColor="#9CA3AF"
+                android:textSize="12sp"
+                android:typeface="monospace" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:orientation="vertical"
+            android:background="#0B1220"
+            android:padding="14dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Ads Blocked Trend"
+                android:textColor="#E5E7EB"
+                android:textStyle="bold"
+                android:textSize="18sp" />
+
+            <com.mrksvt.firewallagent.SecurityTrendChartView
+                android:id="@+id/adsTrendChart"
+                android:layout_width="match_parent"
+                android:layout_height="170dp"
+                android:layout_marginTop="8dp"
+                android:background="#0F172A" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:orientation="vertical"
+            android:background="#0B1220"
+            android:padding="14dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="AdGuard Block Stats"
+                android:textColor="#E5E7EB"
+                android:textStyle="bold"
+                android:textSize="18sp" />
+
+            <TextView
+                android:id="@+id/adSummaryText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="Loading..."
+                android:textColor="#D1D5DB"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/adAppEmptyText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="Belum ada query ads yang diblok."
+                android:textColor="#9CA3AF"
+                android:textSize="13sp" />
+
+            <LinearLayout
+                android:id="@+id/adAppListContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:orientation="vertical" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:orientation="vertical"
+            android:background="#0B1220"
+            android:padding="14dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Call Guard"
+                android:textColor="#E5E7EB"
+                android:textStyle="bold"
+                android:textSize="18sp" />
+
+            <com.mrksvt.firewallagent.SecurityPieChartView
+                android:id="@+id/callGuardPieChart"
+                android:layout_width="match_parent"
+                android:layout_height="190dp"
+                android:layout_marginTop="8dp"
+                android:background="#0F172A" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:orientation="vertical"
+            android:background="#0B1220"
+            android:padding="14dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Call Guard Logs"
+                android:textColor="#E5E7EB"
+                android:textStyle="bold"
+                android:textSize="18sp" />
+
+            <TextView
+                android:id="@+id/callSummaryText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="Loading..."
+                android:textColor="#D1D5DB"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/callLogText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="#0A0A0A"
+                android:padding="10dp"
+                android:text="-"
+                android:textColor="#9CA3AF"
+                android:textSize="12sp"
+                android:typeface="monospace" />
+        </LinearLayout>
+
+    </LinearLayout>
+</ScrollView>

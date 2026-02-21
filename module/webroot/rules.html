@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Firewall Agent - Rules</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><i class="bi bi-list-ul"></i> Rules</div>
+    <div class="tools">
+      <button id="back" class="icon-btn" title="Back"><i class="bi bi-arrow-left"></i></button>
+      <button id="refresh" class="icon-btn" title="Refresh"><i class="bi bi-arrow-clockwise"></i></button>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="panel">
+      <div class="toolbar-row">
+        <input id="incident-id" type="text" placeholder="incident_id..." />
+        <button id="approve" type="button">Approve/Block</button>
+        <button id="reject" type="button">Reject/Allow</button>
+        <button id="export-prompt" type="button">Export Prompt</button>
+      </div>
+      <div class="hint">Isi `incident_id` untuk approve/reject. Gunakan Export Prompt untuk kirim bahan analisis model.</div>
+      <pre id="rules-output">loading rules...</pre>
+    </section>
+  </main>
+
+  <script src="./ksu_bridge.js"></script>
+  <script>
+    async function loadRules() {
+      const el = document.getElementById("rules-output");
+      try {
+        const out = await window.KSUBridge.runScript("webroot/api/rules.sh");
+        el.textContent = out || "rules empty";
+      } catch (e) {
+        el.textContent = `error: ${e}`;
+      }
+    }
+
+    async function runAction(cmd) {
+      const id = document.getElementById("incident-id").value.trim();
+      const el = document.getElementById("rules-output");
+      if (!id) {
+        el.textContent = "isi incident_id dulu.";
+        return;
+      }
+      try {
+        const out = await window.KSUBridge.execRoot(`su -c 'sh /data/adb/modules/ai.adaptive.firewall/bin/module_ctl.sh ${cmd} ${id}'`);
+        await loadRules();
+        el.textContent = `${out}\n\n${el.textContent}`;
+      } catch (e) {
+        el.textContent = `error action: ${e}`;
+      }
+    }
+
+    async function exportPrompt() {
+      const el = document.getElementById("rules-output");
+      try {
+        const out = await window.KSUBridge.execRoot("su -c 'sh /data/adb/modules/ai.adaptive.firewall/bin/module_ctl.sh export-latest-prompt'");
+        el.textContent = out;
+      } catch (e) {
+        el.textContent = `error export prompt: ${e}`;
+      }
+    }
+
+    document.getElementById("refresh").addEventListener("click", loadRules);
+    document.getElementById("approve").addEventListener("click", () => runAction("approve"));
+    document.getElementById("reject").addEventListener("click", () => runAction("reject"));
+    document.getElementById("export-prompt").addEventListener("click", exportPrompt);
+    document.getElementById("back").addEventListener("click", () => history.back());
+    loadRules();
+  </script>
+</body>
+</html>

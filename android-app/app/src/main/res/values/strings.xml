@@ -1,0 +1,34 @@
+<resources>
+    <string name="app_name">Firewall Agent Root</string>
+    <string-array name="modes">
+        <item>audit</item>
+        <item>safe</item>
+        <item>enforce</item>
+    </string-array>
+    <string-array name="profiles">
+        <item>anlap</item>
+        <item>Profile 1</item>
+        <item>Profile 2</item>
+        <item>Profile 3</item>
+    </string-array>
+    <string-array name="allow_block">
+        <item>allow</item>
+        <item>block</item>
+    </string-array>
+    <string-array name="log_targets">
+        <item>NFLOG</item>
+        <item>LOG</item>
+        <item>ULOG</item>
+        <item>NONE</item>
+    </string-array>
+    <string-array name="languages">
+        <item>id</item>
+        <item>en</item>
+        <item>ko</item>
+    </string-array>
+    <string-array name="model_channels">
+        <item>stable</item>
+        <item>beta</item>
+        <item>dev</item>
+    </string-array>
+</resources>

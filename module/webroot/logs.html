@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Firewall Agent - View Log</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><i class="bi bi-journal-text"></i> View Log</div>
+    <div class="tools">
+      <button id="back" class="icon-btn" title="Back"><i class="bi bi-arrow-left"></i></button>
+      <button id="refresh" class="icon-btn" title="Refresh"><i class="bi bi-arrow-clockwise"></i></button>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="panel">
+      <div class="toolbar-row">
+        <input id="log-search" type="search" placeholder="Search log..." />
+        <button id="export-log" type="button">Export Log</button>
+      </div>
+      <div class="hint">Tip: geser horizontal untuk melihat baris panjang.</div>
+      <div class="log-wrap">
+        <table class="log-table">
+          <tbody id="log-body">
+            <tr><td class="log-line-text">loading logs...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="./ksu_bridge.js"></script>
+  <script>
+    let rawLog = "";
+
+    function renderLogs() {
+      const body = document.getElementById("log-body");
+      const q = (document.getElementById("log-search").value || "").toLowerCase().trim();
+      const lines = rawLog.split("\n");
+      body.innerHTML = lines.map((line, i) => {
+        const hit = q && line.toLowerCase().includes(q) ? " hit" : "";
+        const safe = line
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+        return `<tr>
+          <td class="log-line-no${hit}">${i + 1}</td>
+          <td class="log-line-text${hit}">${safe || " "}</td>
+        </tr>`;
+      }).join("");
+    }
+
+    async function loadLogs() {
+      try {
+        rawLog = await window.KSUBridge.runScript("webroot/api/view_log.sh");
+        if (!rawLog) rawLog = "[log] kosong";
+        renderLogs();
+      } catch (e) {
+        rawLog = `error: ${e}`;
+        renderLogs();
+      }
+    }
+
+    function exportLog() {
+      const blob = new Blob([rawLog || ""], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `firewall-log-${new Date().toISOString().replace(/[:.]/g, "-")}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    document.getElementById("refresh").addEventListener("click", loadLogs);
+    document.getElementById("log-search").addEventListener("input", renderLogs);
+    document.getElementById("export-log").addEventListener("click", exportLog);
+    document.getElementById("back").addEventListener("click", () => history.back());
+    loadLogs();
+  </script>
+</body>
+</html>
