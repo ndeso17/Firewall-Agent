@@ -381,6 +381,12 @@ class AdGuardActivity : AppCompatActivity() {
                 if (result.stdout.isNotBlank()) appendLine(result.stdout)
                 if (result.stderr.isNotBlank()) appendLine(result.stderr)
             }
+            if (result.ok) {
+                getSharedPreferences("adguard_dns", MODE_PRIVATE)
+                    .edit()
+                    .putBoolean("dns_lock_enabled", enable)
+                    .apply()
+            }
         }
     }
 

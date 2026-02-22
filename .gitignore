@@ -12,6 +12,7 @@ captures/
 build/
 **/build/
 android-app/.tmp/
+release-assets/
 
 *.apk
 *.ap_

@@ -293,42 +293,32 @@ class FirewallKeepAliveService : Service() {
         // Tunggu sebentar sampai route/resolver baru settle
         Thread.sleep(1200)
 
+        val lockDesired = isDnsLockDesired()
+
         // 2) cleanup DNS rules
         val clean = clearDnsRules()
         Log.i(tag, "step4 clear_dns_rules exit=${clean.code}")
 
         // 3) ping saved dns
         val savedHost = resolveSavedDnsHost()
-        Log.i(tag, "step5 saved_dns=$savedHost")
+        Log.i(tag, "step5 saved_dns=$savedHost lock_desired=$lockDesired")
         if (savedHost.isNotBlank() && probeDnsHostWithRetry(savedHost)) {
             // 4) rewrite rules when ping success
-            val apply = applyDnsLockRulesForCurrentNetwork()
-            RootFirewallController.runRaw(
-                "settings put global private_dns_mode hostname; settings put global private_dns_specifier $savedHost",
-            )
-            Log.i(tag, "step6 rewrite_rules_for_saved_dns exit=${apply.code}")
+            val applyCode = if (lockDesired) applyDnsLockRulesForCurrentNetwork().code else 0
+            RootFirewallController.runRaw("settings put global private_dns_mode hostname; settings put global private_dns_specifier $savedHost")
+            Log.i(tag, "step6 rewrite_rules_for_saved_dns exit=$applyCode lock=${if (lockDesired) "on" else "off"}")
             NotifyHelper.post(this, "Firewall Agent", "Handover OK: DNS $savedHost aktif.", 1204)
             return
         }
 
-        // 5) fallback dns when saved dns failed
-        val fallback = chooseBestDnsHostWithRetry()
-        if (fallback != null) {
-            RootFirewallController.runRaw(
-                "settings put global private_dns_mode hostname; settings put global private_dns_specifier $fallback",
-            )
+        if (lockDesired) {
             val apply = applyDnsLockRulesForCurrentNetwork()
-            Log.w(tag, "step7 fallback_dns=$fallback rewrite_exit=${apply.code}")
-            NotifyHelper.post(this, "Firewall Agent", "Handover fallback ke DNS $fallback.", 1205)
-            return
+            Log.w(tag, "step7 keep_user_dns_and_reapply_lock exit=${apply.code}")
+            NotifyHelper.post(this, "Firewall Agent", "Handover: DNS/Lock user dipertahankan.", 1205)
+        } else {
+            Log.w(tag, "step7 lock_not_desired keep_current_dns")
+            NotifyHelper.post(this, "Firewall Agent", "Handover: DNS user dipertahankan.", 1205)
         }
-
-        // 6) internet recovery
-        RootFirewallController.runRaw(
-            "settings put global private_dns_mode opportunistic; settings delete global private_dns_specifier",
-        )
-        Log.w(tag, "step8 recovery_mode=opportunistic")
-        NotifyHelper.post(this, "Firewall Agent", "Handover recovery: DNS opportunistic.", 1206)
     }
 
     private fun currentNetworkSignature(): String {
@@ -355,6 +345,15 @@ class FirewallKeepAliveService : Service() {
         if (mode == "hostname" && host.isNotBlank() && host != "null") return host
         val pref = getSharedPreferences("adguard_dns", MODE_PRIVATE)
         return pref.getString("saved_dns_host", "").orEmpty()
+    }
+
+    private fun isDnsLockDesired(): Boolean {
+        val pref = getSharedPreferences("adguard_dns", MODE_PRIVATE)
+        if (pref.getBoolean("dns_lock_enabled", false)) return true
+        val lockState = RootFirewallController.runRaw(
+            "if iptables -S OUTPUT 2>/dev/null | grep -q ' -j FA_DNS'; then echo on; else echo off; fi",
+        ).stdout.trim()
+        return lockState == "on"
     }
 
     private fun probeDnsHost(host: String): Boolean {

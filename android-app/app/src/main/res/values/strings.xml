@@ -21,6 +21,29 @@
         <item>ULOG</item>
         <item>NONE</item>
     </string-array>
+    
+    <!-- Evil Twin Detection -->
+    <string name="evil_twin_title">Evil Twin Detection</string>
+    <string name="evil_twin_description">Deteksi serangan Evil Twin AP</string>
+    <string name="start_scan">Start Scan</string>
+    <string name="stop_scan">Stop Scan</string>
+    <string name="clear_results">Clear</string>
+    <string name="save_report">Save Report</string>
+    <string name="total_networks">Total: %d</string>
+    <string name="suspicious_networks">Suspicious: %d</string>
+    <string name="threat_level_low">Low</string>
+    <string name="threat_level_medium">Medium</string>
+    <string name="threat_level_high">High</string>
+    <string name="threat_level_critical">Critical</string>
+    <string name="evil_twin_alert_title">Bahaya Evil Twin Terdeteksi!</string>
+    <string name="evil_twin_alert_message">⚠️ DETEKSI EVIL TWIN KRITIS!\n\nDisarankan untuk memutus koneksi WiFi.</string>
+    <string name="disconnect_wifi">Putus WiFi</string>
+    <string name="network_details">Detail Jaringan</string>
+    <string name="report_saved">Laporan disimpan</string>
+    <string name="scan_failed">Scan gagal</string>
+    <string name="permission_denied">Izin tidak cukup</string>
+    <string name="wifi_disconnected">WiFi terputus</string>
+    <string name="results_cleared">Hasil dihapus</string>
     <string-array name="languages">
         <item>id</item>
         <item>en</item>

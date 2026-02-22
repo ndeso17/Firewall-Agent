@@ -13,6 +13,10 @@
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
@@ -43,6 +47,12 @@
             android:directBootAware="true"
             android:process=":backend"
             android:foregroundServiceType="dataSync" />
+        <activity
+            android:name=".EvilTwinActivity"
+            android:exported="false"
+            android:label="Evil Twin Detection"
+            android:theme="@style/Theme.FirewallAgentRoot" />
+        
         <service
             android:name=".FirewallCallScreeningService"
             android:enabled="true"

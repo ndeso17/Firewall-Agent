@@ -1186,6 +1186,7 @@ class MainActivity : AppCompatActivity() {
         menu.menu.add(Menu.NONE, 11, 11, "Call Guard")
         menu.menu.add(Menu.NONE, 12, 12, "AdGuard DNS")
         menu.menu.add(Menu.NONE, 13, 13, "Tor Connection")
+        menu.menu.add(Menu.NONE, 18, 18, "Evil Twin Detection")
         menu.menu.add(Menu.NONE, 17, 17, "Security Stats")
         menu.setOnMenuItemClickListener { onMenuClicked(it) }
         menu.show()
@@ -1220,6 +1221,7 @@ class MainActivity : AppCompatActivity() {
             12 -> { startActivity(Intent(this, AdGuardActivity::class.java)); true }
             13 -> { openTorEntry(); true }
             17 -> { startActivity(Intent(this, SecurityStatsActivity::class.java)); true }
+            18 -> { startActivity(Intent(this, EvilTwinActivity::class.java)); true }
             else -> false
         }
     }
