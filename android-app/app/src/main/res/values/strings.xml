@@ -29,6 +29,9 @@
     <string name="stop_scan">Stop Scan</string>
     <string name="clear_results">Clear</string>
     <string name="save_report">Save Report</string>
+    <string name="save_report_short">Save</string>
+    <string name="start_background_monitor">Start Monitor</string>
+    <string name="stop_background_monitor">Stop Monitor</string>
     <string name="total_networks">Total: %d</string>
     <string name="suspicious_networks">Suspicious: %d</string>
     <string name="threat_level_low">Low</string>

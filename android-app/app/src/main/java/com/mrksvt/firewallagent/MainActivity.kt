@@ -222,6 +222,7 @@ class MainActivity : AppCompatActivity() {
                 latestApplyProgress.processed,
                 latestApplyProgress.totalUid,
                 latestApplyProgress.totalApps,
+                latestApplyProgress.phase,
             )
         }
         if (!applyInProgress && backendBusyDepth > 0 && backendBusyDialog == null) {
@@ -1398,8 +1399,29 @@ class MainActivity : AppCompatActivity() {
 
     private fun applySelectedRules() {
         lifecycleScope.launch {
+            lastProgressNotifProcessed = -1
+            lastProgressNotifAtMs = 0L
+            lastProgressUiProcessed = -1
+            lastProgressUiAtMs = 0L
+            applyInProgress = true
+            val initialApps = allApps.size
+            latestApplyProgress = ApplyProgressModel(1, 100, initialApps, "Menyiapkan sinkronisasi backend...")
+            dismissBackendBusyDialog()
+            if (appInForeground) {
+                showApplyProgressDialog(1, 100, initialApps, "Menyiapkan sinkronisasi backend...")
+            } else {
+                NotifyHelper.postApplyProgress(this@MainActivity, 1, 100, initialApps)
+            }
+
             // Refresh installed package snapshot first to avoid stale uninstall entries.
             loadInstalledApps()
+            val totalApps = allApps.size
+            latestApplyProgress = ApplyProgressModel(12, 100, totalApps, "Sinkronisasi daftar aplikasi...")
+            if (appInForeground) {
+                updateApplyProgressDialog(12, 100, totalApps, "Sinkronisasi daftar aplikasi...")
+            } else {
+                NotifyHelper.postApplyProgress(this@MainActivity, 12, 100, totalApps)
+            }
             cleanupOrphanManagedUids()
 
             // Apply must evaluate all known app rules, not only filtered/visible rows.
@@ -1410,16 +1432,24 @@ class MainActivity : AppCompatActivity() {
                 .map { it.uid }
                 .distinct()
             saveShadowBlockedUids(blocked)
+            latestApplyProgress = ApplyProgressModel(25, 100, totalApps, "Memvalidasi akses root...")
+            if (appInForeground) {
+                updateApplyProgressDialog(25, 100, totalApps, "Memvalidasi akses root...")
+            } else {
+                NotifyHelper.postApplyProgress(this@MainActivity, 25, 100, totalApps)
+            }
 
             val rootedNow = withContext(Dispatchers.IO) { RootFirewallController.checkRoot() }
             rootAvailable = rootedNow
             if (!rootedNow) {
+                applyInProgress = false
+                NotifyHelper.clearApplyProgress(this@MainActivity)
+                dismissApplyProgressDialog()
                 updateStatusFab(false, false)
                 showOutput("Root belum aktif. Grant akses root di Magisk/KSU.")
                 return@launch
             }
 
-            val totalApps = allApps.size
             val desiredRestrictedByUid = allRules
                 .filter { !isAllAllowedRule(it) }
                 .associateBy { it.uid }
@@ -1440,34 +1470,48 @@ class MainActivity : AppCompatActivity() {
             val totalChanges = upsertRules.size + removeUids.size
 
             if (totalChanges == 0) {
-                setBusy(false)
+                applyInProgress = false
+                NotifyHelper.clearApplyProgress(this@MainActivity)
+                dismissApplyProgressDialog()
                 showApplyResultDialog(
                     "Tidak ada perubahan",
                     "Semua rules sudah sinkron. Tidak ada update iptables yang perlu diterapkan.",
                 )
                 return@launch
             }
-
-            lastProgressNotifProcessed = -1
-            lastProgressNotifAtMs = 0L
-            lastProgressUiProcessed = -1
-            lastProgressUiAtMs = 0L
-            applyInProgress = true
-            latestApplyProgress = ApplyProgressModel(0, totalChanges, totalApps)
+            latestApplyProgress = ApplyProgressModel(35, 100, totalApps, "Menerapkan perubahan rules...")
             if (appInForeground) {
-                showApplyProgressDialog(0, totalChanges, totalApps)
+                if (applyProgressDialog == null) {
+                    showApplyProgressDialog(35, 100, totalApps, "Menerapkan perubahan rules...")
+                } else {
+                    updateApplyProgressDialog(35, 100, totalApps, "Menerapkan perubahan rules...")
+                }
             } else {
-                NotifyHelper.postApplyProgress(this@MainActivity, 0, totalChanges, totalApps)
+                NotifyHelper.postApplyProgress(this@MainActivity, 35, 100, totalApps)
             }
             setBusy(true)
 
             val resultPack = withContext(Dispatchers.IO) {
                 val (applyResult, summary) = RootFirewallController.applyAppRulesIncremental(upsertRules, removeUids) { processed, total ->
                     runOnUiThread {
-                        latestApplyProgress = ApplyProgressModel(processed, total, totalApps)
+                        val safeTotal = if (total <= 0) 1 else total
+                        val percent = (35f + (processed.toFloat() / safeTotal.toFloat()) * 60f)
+                            .roundToInt()
+                            .coerceIn(35, 95)
+                        latestApplyProgress = ApplyProgressModel(
+                            percent,
+                            100,
+                            totalApps,
+                            "Menerapkan perubahan rules ($processed/$total)",
+                        )
                         if (appInForeground) {
                             if (applyProgressDialog == null) {
-                                showApplyProgressDialog(processed, total, totalApps)
+                                showApplyProgressDialog(
+                                    percent,
+                                    100,
+                                    totalApps,
+                                    "Menerapkan perubahan rules ($processed/$total)",
+                                )
                             }
                             val now = System.currentTimeMillis()
                             val shouldUiUpdate = processed == total ||
@@ -1475,7 +1519,12 @@ class MainActivity : AppCompatActivity() {
                                 processed - lastProgressUiProcessed >= 2 ||
                                 now - lastProgressUiAtMs >= 90
                             if (shouldUiUpdate) {
-                                updateApplyProgressDialog(processed, total, totalApps)
+                                updateApplyProgressDialog(
+                                    percent,
+                                    100,
+                                    totalApps,
+                                    "Menerapkan perubahan rules ($processed/$total)",
+                                )
                                 lastProgressUiProcessed = processed
                                 lastProgressUiAtMs = now
                             }
@@ -1486,7 +1535,7 @@ class MainActivity : AppCompatActivity() {
                                 processed - lastProgressNotifProcessed >= 4 ||
                                 now - lastProgressNotifAtMs >= 700
                             if (shouldNotify) {
-                                NotifyHelper.postApplyProgress(this@MainActivity, processed, total, totalApps)
+                                NotifyHelper.postApplyProgress(this@MainActivity, percent, 100, totalApps)
                                 lastProgressNotifProcessed = processed
                                 lastProgressNotifAtMs = now
                             }
@@ -1506,6 +1555,11 @@ class MainActivity : AppCompatActivity() {
             val (result, summary, phase) = resultPack
             applyInProgress = false
             NotifyHelper.clearApplyProgress(this@MainActivity)
+            if (appInForeground) {
+                updateApplyProgressDialog(100, 100, totalApps, "Finalisasi...")
+            } else {
+                NotifyHelper.postApplyProgress(this@MainActivity, 100, 100, totalApps)
+            }
 
             if (result.ok && summary.failedUids == 0) {
                 saveRuleStateMap(desiredSignatures)
@@ -1563,9 +1617,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showApplyProgressDialog(processed: Int, totalUid: Int, totalApps: Int) {
+    private fun showApplyProgressDialog(
+        processed: Int,
+        totalUid: Int,
+        totalApps: Int,
+        phase: String = "Memproses...",
+    ) {
         dismissApplyProgressDialog()
-        val state = mutableStateOf(ApplyProgressModel(processed, totalUid, totalApps))
+        val state = mutableStateOf(ApplyProgressModel(processed, totalUid, totalApps, phase))
         applyProgressState = state
         val content = ComposeView(this).apply {
             setContent {
@@ -1590,8 +1649,13 @@ class MainActivity : AppCompatActivity() {
         applyProgressDialog = dlg
     }
 
-    private fun updateApplyProgressDialog(processed: Int, totalUid: Int, totalApps: Int) {
-        applyProgressState?.value = ApplyProgressModel(processed, totalUid, totalApps)
+    private fun updateApplyProgressDialog(
+        processed: Int,
+        totalUid: Int,
+        totalApps: Int,
+        phase: String = "Memproses...",
+    ) {
+        applyProgressState?.value = ApplyProgressModel(processed, totalUid, totalApps, phase)
     }
 
     private fun dismissApplyProgressDialog() {
@@ -2007,6 +2071,7 @@ private data class ApplyProgressModel(
     val processed: Int,
     val totalUid: Int,
     val totalApps: Int,
+    val phase: String = "Memproses...",
 )
 
 private data class PendingApplySummary(
@@ -2019,7 +2084,7 @@ private object applyState {
     var inProgress: Boolean = false
 
     @Volatile
-    var progress: ApplyProgressModel = ApplyProgressModel(0, 1, 0)
+    var progress: ApplyProgressModel = ApplyProgressModel(0, 100, 0, "Memproses...")
 
     @Volatile
     var pendingSummary: PendingApplySummary? = null
@@ -2077,7 +2142,7 @@ private fun ApplyProgressContent(progress: ApplyProgressModel) {
                 }
                 Spacer(modifier = androidx.compose.ui.Modifier.height(14.dp))
                 Text(
-                    text = "Menerapkan perubahan rules (${progress.processed}/${progress.totalUid})",
+                    text = progress.phase,
                     fontSize = 14.sp,
                     color = Color(0xFFFFFFFF),
                 )

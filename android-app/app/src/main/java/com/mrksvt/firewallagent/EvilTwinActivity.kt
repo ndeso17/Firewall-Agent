@@ -6,10 +6,13 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.net.wifi.ScanResult
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
 import android.view.Menu
 import android.view.MenuItem
 import android.widget.Toast
@@ -26,6 +29,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -40,6 +44,7 @@ class EvilTwinActivity : AppCompatActivity() {
     private val scanResults = mutableListOf<ScanResult>()
     private var isScanning = false
     private val evilTwinDetector = EvilTwinDetector()
+    private val prefs by lazy { getSharedPreferences("evil_twin_prefs", Context.MODE_PRIVATE) }
 
     private var scanJob: Job? = null
     private val activityScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -68,7 +73,7 @@ class EvilTwinActivity : AppCompatActivity() {
         setupRecyclerView()
         setupButtons()
         checkPermissions()
-        updateBackgroundMonitorButton(isServiceRunning())
+        updateBackgroundMonitorButton(isMonitorEnabled())
     }
 
     private fun setupRecyclerView() {
@@ -101,42 +106,50 @@ class EvilTwinActivity : AppCompatActivity() {
     }
 
     private fun toggleBackgroundMonitoring() {
-        if (isServiceRunning()) {
+        if (isMonitorEnabled()) {
             stopBackgroundMonitoring()
         } else {
             startBackgroundMonitoring()
         }
     }
 
-    private fun isServiceRunning(): Boolean {
-        val manager = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
-        return manager.getRunningServices(Integer.MAX_VALUE).any {
-            it.service.className == EvilTwinDetectionService::class.java.name
-        }
+    private fun isMonitorEnabled(): Boolean {
+        return prefs.getBoolean("monitor_enabled", false)
     }
 
     private fun startBackgroundMonitoring() {
         try {
+            prefs.edit().putBoolean("monitor_enabled", true).apply()
             EvilTwinDetectionService.startService(this)
             updateBackgroundMonitorButton(true)
             Toast.makeText(this, "Background monitoring started", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
+            prefs.edit().putBoolean("monitor_enabled", false).apply()
             Toast.makeText(this, "Failed to start monitoring: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
     private fun stopBackgroundMonitoring() {
         try {
-            EvilTwinDetectionService.stopService(this)
+            prefs.edit().putBoolean("monitor_enabled", false).apply()
+            val stopped = EvilTwinDetectionService.stopService(this)
             updateBackgroundMonitorButton(false)
-            Toast.makeText(this, "Background monitoring stopped", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                this,
+                if (stopped) "Background monitoring stopped" else "Stop requested",
+                Toast.LENGTH_SHORT
+            ).show()
         } catch (e: Exception) {
             Toast.makeText(this, "Failed to stop monitoring: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
     private fun updateBackgroundMonitorButton(isRunning: Boolean) {
-        binding.btnBackgroundMonitor.text = if (isRunning) "Stop Monitor" else "Start Monitor"
+        binding.btnBackgroundMonitor.text = if (isRunning) {
+            getString(R.string.stop_background_monitor)
+        } else {
+            getString(R.string.start_background_monitor)
+        }
         binding.btnBackgroundMonitor.setBackgroundColor(
             ContextCompat.getColor(this, if (isRunning) android.R.color.holo_red_dark else android.R.color.holo_green_dark)
         )
@@ -296,12 +309,10 @@ class EvilTwinActivity : AppCompatActivity() {
                 }
 
                 val filename = "evil_twin_report_${System.currentTimeMillis()}.txt"
-                openFileOutput(filename, Context.MODE_PRIVATE).use { output ->
-                    output.write(report.toByteArray())
-                }
+                val savedLocation = saveReportToUserFolder(filename, report.toByteArray())
 
                 activityScope.launch(Dispatchers.Main) {
-                    Toast.makeText(this@EvilTwinActivity, "Report saved: $filename", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this@EvilTwinActivity, "Report saved: $savedLocation", Toast.LENGTH_LONG).show()
                 }
             } catch (e: Exception) {
                 activityScope.launch(Dispatchers.Main) {
@@ -309,6 +320,32 @@ class EvilTwinActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun saveReportToUserFolder(fileName: String, content: ByteArray): String {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = android.content.ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOCUMENTS}/FirewallAgent")
+            }
+            val resolver = applicationContext.contentResolver
+            val uri: Uri = resolver.insert(MediaStore.Files.getContentUri("external"), values)
+                ?: throw IllegalStateException("Unable to create report file in Documents/FirewallAgent")
+            resolver.openOutputStream(uri)?.use { out ->
+                out.write(content)
+            } ?: throw IllegalStateException("Unable to open output stream for report")
+            return "Documents/FirewallAgent/$fileName"
+        }
+
+        val base = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+        val folder = File(base, "FirewallAgent")
+        if (!folder.exists() && !folder.mkdirs()) {
+            throw IllegalStateException("Unable to create folder: ${folder.absolutePath}")
+        }
+        val outFile = File(folder, fileName)
+        outFile.outputStream().use { it.write(content) }
+        return outFile.absolutePath
     }
 
     private fun showNetworkDetails(network: EvilTwinNetwork) {
@@ -365,7 +402,7 @@ class EvilTwinActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        updateBackgroundMonitorButton(isServiceRunning())
+        updateBackgroundMonitorButton(isMonitorEnabled())
     }
 
     override fun onDestroy() {

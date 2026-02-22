@@ -39,9 +39,19 @@ class EvilTwinDetectionService : Service() {
         private const val NOTIFICATION_CHANNEL_ID = "evil_twin_channel"
         private const val NOTIFICATION_ID = 1001
         private const val MAX_THREAT_COUNT = 3
+        private const val ACTION_START_MONITOR = "com.mrksvt.firewallagent.action.START_EVIL_TWIN_MONITOR"
+        private const val ACTION_STOP_MONITOR = "com.mrksvt.firewallagent.action.STOP_EVIL_TWIN_MONITOR"
+        private const val ACTION_RECORD_THREAT = "RECORD_THREAT"
+        private const val ACTION_SEND_THREAT_NOTIFICATION = "SEND_THREAT_NOTIFICATION"
+        @Volatile
+        private var running = false
+
+        fun isRunning(): Boolean = running
         
         fun startService(context: Context) {
-            val intent = Intent(context, EvilTwinDetectionService::class.java)
+            val intent = Intent(context, EvilTwinDetectionService::class.java).apply {
+                action = ACTION_START_MONITOR
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
@@ -49,9 +59,18 @@ class EvilTwinDetectionService : Service() {
             }
         }
         
-        fun stopService(context: Context) {
-            val intent = Intent(context, EvilTwinDetectionService::class.java)
-            context.stopService(intent)
+        fun stopService(context: Context): Boolean {
+            val intent = Intent(context, EvilTwinDetectionService::class.java).apply {
+                action = ACTION_STOP_MONITOR
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+            // Fallback hard-stop in case action dispatch is delayed on some OEM ROMs.
+            val hardStop = context.stopService(Intent(context, EvilTwinDetectionService::class.java))
+            return hardStop
         }
     }
     
@@ -63,14 +82,43 @@ class EvilTwinDetectionService : Service() {
     }
     
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.d(TAG, "Evil Twin detection service started")
-        
-        val notification = createNotification()
-        startForeground(NOTIFICATION_ID, notification)
-        
-        startMonitoring()
-        
-        return START_STICKY
+        when (intent?.action) {
+            ACTION_STOP_MONITOR -> {
+                Log.d(TAG, "Evil Twin detection service stop requested")
+                stopMonitoring()
+                running = false
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                } else {
+                    @Suppress("DEPRECATION")
+                    stopForeground(true)
+                }
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            ACTION_RECORD_THREAT -> {
+                val bssid = intent.getStringExtra("BSSID")
+                if (!bssid.isNullOrBlank()) {
+                    recordThreat(bssid)
+                }
+                return START_STICKY
+            }
+            ACTION_SEND_THREAT_NOTIFICATION -> {
+                val details = intent.getStringExtra("THREAT_DETAILS")
+                if (!details.isNullOrBlank()) {
+                    sendThreatNotification(details)
+                }
+                return START_STICKY
+            }
+            else -> {
+                Log.d(TAG, "Evil Twin detection service started")
+                val notification = createNotification()
+                startForeground(NOTIFICATION_ID, notification)
+                startMonitoring()
+                running = true
+                return START_STICKY
+            }
+        }
     }
     
     override fun onBind(intent: Intent?): IBinder? = null
@@ -79,6 +127,7 @@ class EvilTwinDetectionService : Service() {
         super.onDestroy()
         Log.d(TAG, "Evil Twin detection service stopped")
         stopMonitoring()
+        running = false
         unregisterReceiver()
         serviceScope.cancel()
     }
@@ -123,12 +172,14 @@ class EvilTwinDetectionService : Service() {
         if (isMonitoring) return
         
         isMonitoring = true
+        running = true
         scheduleNextScan()
         Log.d(TAG, "Started monitoring for Evil Twin attacks")
     }
     
     private fun stopMonitoring() {
         isMonitoring = false
+        running = false
         handler.removeCallbacksAndMessages(null)
         Log.d(TAG, "Stopped monitoring for Evil Twin attacks")
     }
