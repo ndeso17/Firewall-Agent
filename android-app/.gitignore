@@ -4,3 +4,6 @@ local.properties
 *.iml
 /build/
 /app/build/
+
+# Private Lab Features (Completely ignored folder)
+/app/src/privat/

@@ -396,6 +396,10 @@ class EvilTwinActivity : AppCompatActivity() {
                 saveReport()
                 true
             }
+            R.id.action_creator -> {
+                EvilTwinCreatorLauncher.launch(this)
+                true
+            }
             else -> super.onOptionsItemSelected(item)
         }
     }

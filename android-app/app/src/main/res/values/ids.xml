@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Defined so main source set can reference it without compile errors in publik flavor -->
+    <item name="action_creator" type="id" />
+</resources>

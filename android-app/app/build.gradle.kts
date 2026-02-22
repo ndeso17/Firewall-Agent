@@ -27,6 +27,16 @@ android {
         }
     }
 
+    flavorDimensions += "edition"
+    productFlavors {
+        create("publik") {
+            dimension = "edition"
+        }
+        create("privat") {
+            dimension = "edition"
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
