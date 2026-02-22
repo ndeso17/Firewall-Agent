@@ -410,13 +410,20 @@ class FirewallKeepAliveService : Service() {
             "if iptables -S OUTPUT 2>/dev/null | grep -q ' -j FA_DNS'; then echo on; else echo off; fi",
         ).stdout.trim()
         if (lockState != "on") return
+        // Sync bypass UIDs before rebuilding FA_DNS chain
+        DnsBypassStore.syncBypassUids(applicationContext)
+        val bypassUids = DnsBypassStore.loadBypassUids(applicationContext)
         val cmd = buildString {
-            append("iptables -N FA_DNS >/dev/null 2>&1 || true;")
-            append("iptables -F FA_DNS >/dev/null 2>&1 || true;")
+            append("iptables -N FA_DNS > /dev/null 2>&1 || true;")
+            append("iptables -F FA_DNS > /dev/null 2>&1 || true;")
             // Bypass UID sistem agar resolver internal Android tetap stabil saat network handover.
             append("iptables -A FA_DNS -m owner --uid-owner 0-9999 -j RETURN;")
             append("iptables -A FA_DNS -o lo -j RETURN;")
             append("iptables -A FA_DNS -d 127.0.0.0/8 -j RETURN;")
+            // Per-app bypass exemptions survive network handover
+            bypassUids.forEach { uid ->
+                append("iptables -A FA_DNS -m owner --uid-owner $uid -j RETURN;")
+            }
             append("for ip in 94.140.14.14 94.140.15.15; do ")
             append("iptables -A FA_DNS -p udp --dport 53 -d \"${'$'}ip\" -j RETURN;")
             append("iptables -A FA_DNS -p tcp --dport 53 -d \"${'$'}ip\" -j RETURN;")
@@ -434,12 +441,12 @@ class FirewallKeepAliveService : Service() {
             )
             append("iptables -A FA_DNS -p udp --dport 53 -j REJECT;")
             append("iptables -A FA_DNS -p tcp --dport 53 -j REJECT;")
-            append("while iptables -C OUTPUT -j FA_DNS >/dev/null 2>&1; do iptables -D OUTPUT -j FA_DNS >/dev/null 2>&1 || break; done;")
+            append("while iptables -C OUTPUT -j FA_DNS > /dev/null 2>&1; do iptables -D OUTPUT -j FA_DNS > /dev/null 2>&1 || break; done;")
             append("iptables -I OUTPUT 1 -j FA_DNS;")
             append(buildAdsFirewallEnableScript(resolveAdPatterns()))
         }
         val r = RootFirewallController.runRaw(cmd)
-        Log.i(tag, "refresh FA_DNS lock result=${r.code}")
+        Log.i(tag, "refresh FA_DNS lock result=${r.code} bypass_uids=${bypassUids.size}")
     }
 
     private fun clearDnsRules(): ExecResult {
@@ -452,13 +459,20 @@ class FirewallKeepAliveService : Service() {
 
     private fun applyDnsLockRulesForCurrentNetwork(): ExecResult {
         val patterns = resolveAdPatterns()
+        // Sync & load per-app bypass UIDs
+        DnsBypassStore.syncBypassUids(applicationContext)
+        val bypassUids = DnsBypassStore.loadBypassUids(applicationContext)
         val cmd = buildString {
-            append("iptables -N FA_DNS >/dev/null 2>&1 || true;")
-            append("iptables -F FA_DNS >/dev/null 2>&1 || true;")
+            append("iptables -N FA_DNS > /dev/null 2>&1 || true;")
+            append("iptables -F FA_DNS > /dev/null 2>&1 || true;")
             // Bypass UID sistem supaya resolver internal tetap stabil.
             append("iptables -A FA_DNS -m owner --uid-owner 0-9999 -j RETURN;")
             append("iptables -A FA_DNS -o lo -j RETURN;")
             append("iptables -A FA_DNS -d 127.0.0.0/8 -j RETURN;")
+            // Per-app bypass exemptions
+            bypassUids.forEach { uid ->
+                append("iptables -A FA_DNS -m owner --uid-owner $uid -j RETURN;")
+            }
             append("for ip in 94.140.14.14 94.140.15.15; do ")
             append("iptables -A FA_DNS -p udp --dport 53 -d \"${'$'}ip\" -j RETURN;")
             append("iptables -A FA_DNS -p tcp --dport 53 -d \"${'$'}ip\" -j RETURN;")
@@ -479,6 +493,7 @@ class FirewallKeepAliveService : Service() {
             append("iptables -I OUTPUT 1 -j FA_DNS;")
             append(buildAdsFirewallEnableScript(patterns))
         }
+        Log.i(tag, "apply FA_DNS lock bypass_uids=${bypassUids.size}")
         return RootFirewallController.runRaw(cmd)
     }
 

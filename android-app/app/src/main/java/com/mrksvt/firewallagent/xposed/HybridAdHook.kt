@@ -10,22 +10,94 @@ import java.io.ByteArrayInputStream
 import java.util.Locale
 
 class HybridAdHook : IXposedHookLoadPackage {
+    // Extended ad patterns: includes gambling, scam, and adult ad networks
     private val adPatterns = listOf(
+        // Google Ad Networks
         "doubleclick.net",
         "googleadservices.com",
         "googlesyndication.com",
         "adservice.google.",
         "admob.com",
-        "unityads.",
+        "pagead2.googlesyndication.com",
+        "tpc.googlesyndication.com",
+        "securepubads.g.doubleclick.net",
+        // Mobile Ad SDKs
+        "unityads.unity3d.com",
         "applovin",
         "ironsrc",
         "vungle",
         "adnxs.com",
+        "mintegral.",
+        "hyprmx.com",
+        "inmobi.",
+        "liftoff.",
+        "moloco.",
+        // Display / Programmatic
         "taboola",
         "outbrain",
+        "criteo.",
+        "pubmatic.",
+        "openx.net",
+        "rubiconproject.com",
+        "smartadserver.",
+        "media.net",
+        "bidswitch.net",
         "adsystem",
-        ".ads."
+        ".ads.",
+        // Tracking / Attribution (prevent data exfil even if ad blocked at DNS)
+        "appsflyer.com",
+        "adjust.com",
+        "branch.io",
+        "singular.net",
+        "kochava.com",
+        "tenjin.io",
+        "fyber.",
+        // Gambling-specific ad networks (high-risk)
+        "b-1x2.com",
+        "betsson.",
+        "bettingads.",
+        "casino-ads.",
+        "casinoads.",
+        "gamingads.",
+        "gamblingads.",
+        "beting-ads.",
+        "adbet.",
+        "bookiesads.",
+        "betads.",
+        "casinomedia.",
+        "gamblingaffiliates.",
+        // Scam / Phishing ad networks
+        "trafficjunky.",
+        "propellerads.",
+        "clickadu.",
+        "adcash.",
+        "exoclick.",
+        "hilltopads.",
+        "adsterra.",
+        "popcash.",
+        "ero-advertising.",
+        "txxx.",
+        "juicyads.",
+        "trafficfactory.",
+        "tsyndicate.",
+        // Adult content ad networks
+        "ero-advertising.",
+        "juicyads.",
+        "trafficjunky.",
+        "exoclick.",
+        "adultforce.",
+        "adxxx.",
+        "trafficfactory.",
+        "naiadsystems.",
+        "plugrush.",
+        "xclicks.",
+        "adult-ads.",
+        "adultadvertising.",
+        "ero-advertising.",
     )
+
+    // DNS Hide Hook — handles Private DNS detection masking
+    private val dnsHideHook = DnsHideHook()
 
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
         val pkg = lpparam.packageName ?: return
@@ -41,10 +113,19 @@ class HybridAdHook : IXposedHookLoadPackage {
         } catch (t: Throwable) {
             XposedBridge.log("FA.HybridAdHook init failed for $pkg: ${t.message}")
         }
+
+        // Apply DNS hide hooks — prevents apps from detecting Private DNS as active
+        // and prevents ad SDK connectivity checks from failing with UnknownHostException
+        try {
+            dnsHideHook.handleLoadPackage(lpparam)
+        } catch (t: Throwable) {
+            XposedBridge.log("FA.DnsHideHook init failed for $pkg: ${t.message}")
+        }
     }
 
     private fun hookAdSdkLoads(lpparam: XC_LoadPackage.LoadPackageParam) {
         val sdkHooks = listOf(
+            // Google Mobile Ads
             "com.google.android.gms.ads.AdView" to listOf("loadAd"),
             "com.google.android.gms.ads.BaseAdView" to listOf("loadAd"),
             "com.google.android.gms.ads.AdLoader" to listOf("loadAd", "loadAds"),
@@ -54,22 +135,40 @@ class HybridAdHook : IXposedHookLoadPackage {
             "com.google.android.gms.ads.rewardedinterstitial.RewardedInterstitialAd" to listOf("load"),
             "com.google.android.gms.ads.AdManagerInterstitialAd" to listOf("load"),
             "com.google.android.gms.ads.nativead.NativeAd" to listOf("load"),
+            // AppLovin MAX
             "com.applovin.mediation.ads.MaxAdView" to listOf("loadAd", "startAutoRefresh"),
             "com.applovin.mediation.ads.MaxInterstitialAd" to listOf("loadAd", "showAd"),
             "com.applovin.mediation.ads.MaxRewardedAd" to listOf("loadAd", "showAd"),
             "com.applovin.sdk.AppLovinAdService" to listOf("loadNextAd", "loadNextAdForZoneId"),
+            // Unity Ads
             "com.unity3d.ads.UnityAds" to listOf("load", "show"),
+            // IronSource
             "com.ironsource.mediationsdk.IronSource" to listOf("loadInterstitial", "showInterstitial", "loadRewardedVideo", "showRewardedVideo"),
+            // Vungle (legacy + new)
             "com.vungle.warren.Vungle" to listOf("loadAd", "playAd"),
             "com.vungle.warren.Banners" to listOf("loadBanner"),
-            // Newer Vungle SDK namespace.
             "com.vungle.ads.VungleAds" to listOf("loadAd", "showAd"),
             "com.vungle.ads.BaseFullscreenAd" to listOf("loadAd", "show"),
             "com.vungle.ads.InterstitialAd" to listOf("load", "show"),
             "com.vungle.ads.RewardedAd" to listOf("load", "show"),
+            // Meta Audience Network
             "com.facebook.ads.AdView" to listOf("loadAd"),
             "com.facebook.ads.InterstitialAd" to listOf("loadAd", "show"),
             "com.facebook.ads.RewardedVideoAd" to listOf("loadAd", "show"),
+            // Mintegral
+            "com.mbridge.msdk.interstitialvideo.out.InterstitialVideoAdManager" to listOf("load", "show"),
+            "com.mbridge.msdk.out.MBBannerView" to listOf("loadFromBid"),
+            // InMobi
+            "com.inmobi.ads.InMobiBanner" to listOf("load"),
+            "com.inmobi.ads.InMobiInterstitial" to listOf("load", "show"),
+            // Chartboost
+            "com.chartboost.sdk.Chartboost" to listOf("cacheInterstitial", "showInterstitial", "cacheRewardedVideo", "showRewardedVideo"),
+            // Fyber
+            "com.fyber.inneractive.sdk.api.InneractiveAdSpot" to listOf("requestAd"),
+            // HyprMX
+            "com.hyprmx.android.sdk.HyprMX" to listOf("loadAd", "showAd"),
+            // Liftoff / Vungle
+            "com.liftoff.publisher.LoHook" to listOf("loadAd"),
         )
 
         sdkHooks.forEach { (className, methods) ->

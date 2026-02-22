@@ -2,7 +2,7 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#252525"
+    android:background="#1A1A2E"
     android:fillViewport="true">
 
     <LinearLayout
@@ -10,48 +10,84 @@
         android:layout_height="wrap_content"
         android:orientation="vertical">
 
+        <!-- Header -->
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="60dp"
-            android:background="#1FA122"
+            android:layout_height="72dp"
+            android:background="#16213E"
             android:gravity="center_vertical"
-            android:paddingHorizontal="16dp">
+            android:paddingHorizontal="16dp"
+            android:elevation="4dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="🛡️ AdGuard DNS"
+                android:textColor="#00D4FF"
+                android:textSize="22sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="#0F3460"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="4dp"
+                android:text="PROTECTED"
+                android:textColor="#00D4FF"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- Info Alert -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#0F3460"
+            android:orientation="horizontal"
+            android:padding="12dp">
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="AdGuard DNS"
-                android:textColor="#FFFFFF"
-                android:textSize="24sp"
-                android:textStyle="bold" />
+                android:text="⚠️  Iklan non-Google (judi, penipuan, porno) diblokir di level DNS + Xposed SDK hook. Jika ada app yang protes, gunakan fitur Bypass App di bawah."
+                android:textColor="#87CEEB"
+                android:textSize="12sp" />
         </LinearLayout>
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="12dp">
+            android:padding="14dp">
 
+            <!-- === DNS PROVIDER SECTION === -->
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:layout_marginBottom="6dp"
                 android:text="Provider DNS"
-                android:textColor="#F9FAFB"
+                android:textColor="#00D4FF"
+                android:textSize="13sp"
                 android:textStyle="bold" />
 
             <Spinner
                 android:id="@+id/dnsProviderSpinner"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp" />
+                android:background="#0F3460"
+                android:padding="4dp" />
 
             <TextView
                 android:id="@+id/providerDetailText"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:textColor="#D1D5DB"
-                android:textSize="13sp" />
+                android:background="#16213E"
+                android:padding="10dp"
+                android:textColor="#87CEEB"
+                android:textSize="12sp" />
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -64,8 +100,10 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Ping Semua DNS"
-                    android:textAllCaps="false" />
+                    android:backgroundTint="#0F3460"
+                    android:text="Ping Semua"
+                    android:textAllCaps="false"
+                    android:textColor="#00D4FF" />
 
                 <Space
                     android:layout_width="8dp"
@@ -76,8 +114,10 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
+                    android:backgroundTint="#1FA122"
                     android:text="Pilih Tercepat"
-                    android:textAllCaps="false" />
+                    android:textAllCaps="false"
+                    android:textColor="#FFFFFF" />
             </LinearLayout>
 
             <TextView
@@ -85,7 +125,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:textColor="#A7F3D0"
+                android:textColor="#00FF88"
                 android:textSize="13sp"
                 android:textStyle="bold" />
 
@@ -94,20 +134,32 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
-                android:background="#111111"
-                android:padding="8dp"
-                android:textColor="#9CA3AF"
+                android:background="#0D0D1A"
+                android:padding="10dp"
+                android:textColor="#6B7280"
                 android:textSize="11sp"
                 android:typeface="monospace" />
+
+            <!-- DNS Input + Control Buttons -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:text="Private DNS Host"
+                android:textColor="#00D4FF"
+                android:textSize="13sp"
+                android:textStyle="bold" />
 
             <EditText
                 android:id="@+id/dnsInput"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:hint="Private DNS host"
+                android:layout_marginTop="6dp"
+                android:background="#16213E"
+                android:hint="Private DNS host (e.g. dns.adguard-dns.com)"
+                android:padding="10dp"
                 android:textColor="#E5E7EB"
-                android:textColorHint="#9CA3AF" />
+                android:textColorHint="#4B5563" />
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -120,8 +172,10 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
+                    android:backgroundTint="#1FA122"
                     android:text="Enable"
-                    android:textAllCaps="false" />
+                    android:textAllCaps="false"
+                    android:textColor="#FFFFFF" />
 
                 <Space
                     android:layout_width="6dp"
@@ -132,8 +186,10 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
+                    android:backgroundTint="#0F3460"
                     android:text="Ping DNS"
-                    android:textAllCaps="false" />
+                    android:textAllCaps="false"
+                    android:textColor="#00D4FF" />
 
                 <Space
                     android:layout_width="6dp"
@@ -144,22 +200,39 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
+                    android:backgroundTint="#7F1D1D"
                     android:text="Disable"
-                    android:textAllCaps="false" />
+                    android:textAllCaps="false"
+                    android:textColor="#FCA5A5" />
             </LinearLayout>
+
+            <!-- === DNS FIREWALL LOCK SECTION === -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginVertical="14dp"
+                android:background="#1F2937" />
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:text="Firewall DNS Lock (anti bypass DNS biasa)"
-                android:textColor="#F9FAFB"
+                android:text="🔒 Firewall DNS Lock"
+                android:textColor="#00D4FF"
+                android:textSize="14sp"
                 android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Blokir bypass DNS biasa (port 53) agar tidak ada app yang bisa loncat dari Private DNS. App bypass (lihat di bawah) tetap dikecualikan."
+                android:textColor="#6B7280"
+                android:textSize="12sp" />
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="10dp"
                 android:orientation="horizontal">
 
                 <Button
@@ -167,8 +240,10 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Enable Lock"
-                    android:textAllCaps="false" />
+                    android:backgroundTint="#065F46"
+                    android:text="🔒 Enable Lock"
+                    android:textAllCaps="false"
+                    android:textColor="#6EE7B7" />
 
                 <Space
                     android:layout_width="8dp"
@@ -179,8 +254,10 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Disable Lock"
-                    android:textAllCaps="false" />
+                    android:backgroundTint="#78350F"
+                    android:text="🔓 Disable Lock"
+                    android:textAllCaps="false"
+                    android:textColor="#FCD34D" />
             </LinearLayout>
 
             <Button
@@ -188,19 +265,135 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:text="Reload Status"
-                android:textAllCaps="false" />
+                android:backgroundTint="#1F2937"
+                android:text="↺ Reload Status DNS"
+                android:textAllCaps="false"
+                android:textColor="#9CA3AF" />
 
             <TextView
                 android:id="@+id/outputText"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:background="#111111"
-                android:padding="10dp"
-                android:textColor="#D1D5DB"
+                android:background="#0D0D1A"
+                android:padding="12dp"
+                android:textColor="#9CA3AF"
                 android:textSize="12sp"
                 android:typeface="monospace" />
+
+            <!-- === APP BYPASS SECTION === -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginVertical="14dp"
+                android:background="#1F2937" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="#16213E"
+                android:orientation="vertical"
+                android:padding="14dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="🔀 App DNS Bypass List"
+                    android:textColor="#FCD34D"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:background="#1C2A1C"
+                    android:padding="10dp"
+                    android:text="✅ App yang ditambahkan di sini akan dikecualikan dari iptables DNS Lock, sehingga app bisa bekerja normal meskipun Private DNS aktif.\n\n🛡️ Iklan tetap diblokir via Xposed hook (SDK + WebView), bukan via DNS.\n\nℹ️ Masukkan satu package name per baris."
+                    android:textColor="#6EE7B7"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="Package Names (satu per baris):"
+                    android:textColor="#D1D5DB"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <EditText
+                    android:id="@+id/bypassPackagesInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:background="#0D0D1A"
+                    android:gravity="top"
+                    android:hint="com.tokopedia.tkpd&#10;com.shopee.id&#10;id.co.lazada"
+                    android:inputType="textMultiLine"
+                    android:minLines="4"
+                    android:padding="10dp"
+                    android:textColor="#E5E7EB"
+                    android:textColorHint="#4B5563"
+                    android:typeface="monospace" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/bypassSyncBtn"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:backgroundTint="#92400E"
+                        android:text="💾 Simpan &amp; Sync"
+                        android:textAllCaps="false"
+                        android:textColor="#FCD34D" />
+
+                    <Space
+                        android:layout_width="8dp"
+                        android:layout_height="1dp" />
+
+                    <Button
+                        android:id="@+id/bypassStatusBtn"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:backgroundTint="#1F2937"
+                        android:text="ℹ️ Lihat Status"
+                        android:textAllCaps="false"
+                        android:textColor="#9CA3AF" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/bypassStatusText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:background="#0D0D1A"
+                    android:padding="12dp"
+                    android:textColor="#87CEEB"
+                    android:textSize="12sp"
+                    android:typeface="monospace" />
+
+                <!-- How it works explanation -->
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:background="#0F1A0F"
+                    android:padding="12dp"
+                    android:text="📖 Cara kerja perlindungan:\n\n1️⃣  Private DNS (AdGuard/Quad9) → blokir domain iklan di level resolusi nama\n\n2️⃣  Xposed SDK Hook → batalkan pemanggilan ad SDK (AdMob, AppLovin, dll.) langsung di dalam memori app\n\n3️⃣  WebView Intercept → tangkap iklan yang dimuat via WebView dan kembalikan response kosong\n\n4️⃣  Xposed DNS Hide → sembunyikan status Private DNS dari app agar tidak terdeteksi\n\n5️⃣  App Bypass (iptables) → app tertentu dikecualikan dari DNS Lock tapi TETAP kena Xposed hook"
+                    android:textColor="#4B7A4B"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="24dp" />
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

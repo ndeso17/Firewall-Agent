@@ -3,6 +3,7 @@ package com.mrksvt.firewallagent
 import android.os.Bundle
 import android.widget.ArrayAdapter
 import android.widget.AdapterView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.mrksvt.firewallagent.databinding.ActivityAdguardBinding
@@ -36,6 +37,18 @@ class AdGuardActivity : AppCompatActivity() {
         "ads.",
         "adnxs.com",
         "criteo.com",
+        // Gambling ad networks
+        "bettingads.",
+        "casinoads.",
+        "gamblingads.",
+        "betads.",
+        // Scam / adult ad networks
+        "trafficjunky.",
+        "propellerads.",
+        "exoclick.",
+        "adsterra.",
+        "juicyads.",
+        "trafficfactory.",
     )
     private data class DnsProvider(
         val name: String,
@@ -133,8 +146,14 @@ class AdGuardActivity : AppCompatActivity() {
         binding.reloadBtn.setOnClickListener { readCurrent() }
         binding.pingAllBtn.setOnClickListener { pingAllProviders(selectBest = false) }
         binding.autoBestBtn.setOnClickListener { pingAllProviders(selectBest = true) }
+
+        // Bypass management buttons
+        binding.bypassSyncBtn.setOnClickListener { syncBypassUidsAndApply() }
+        binding.bypassStatusBtn.setOnClickListener { showBypassStatus() }
+
         pingAllProviders(selectBest = true)
         readCurrent()
+        showBypassStatus()
     }
 
     private fun pingSelectedDns() {
@@ -319,6 +338,10 @@ class AdGuardActivity : AppCompatActivity() {
 
     private fun setDnsFirewallLock(enable: Boolean) {
         lifecycleScope.launch {
+            // Sync bypass UIDs before building the lock script
+            withContext(Dispatchers.IO) { DnsBypassStore.syncBypassUids(applicationContext) }
+            val bypassUids = withContext(Dispatchers.IO) { DnsBypassStore.loadBypassUids(applicationContext) }
+
             val mergedPatterns = if (enable) {
                 withContext(Dispatchers.IO) { buildMergedAdPatterns() }
             } else {
@@ -326,12 +349,17 @@ class AdGuardActivity : AppCompatActivity() {
             }
             val cmd = if (enable) {
                 buildString {
-                    append("iptables -N FA_DNS >/dev/null 2>&1 || true;")
-                    append("iptables -F FA_DNS >/dev/null 2>&1 || true;")
+                    append("iptables -N FA_DNS > /dev/null 2>&1 || true;")
+                    append("iptables -F FA_DNS > /dev/null 2>&1 || true;")
                     // Jangan ganggu resolver level sistem (netd/system daemons) saat handover jaringan.
                     append("iptables -A FA_DNS -m owner --uid-owner 0-9999 -j RETURN;")
                     append("iptables -A FA_DNS -o lo -j RETURN;")
                     append("iptables -A FA_DNS -d 127.0.0.0/8 -j RETURN;")
+                    // Per-app bypass exemptions — these UIDs' DNS is let through to avoid
+                    // app refusing to work while Private DNS is active.
+                    bypassUids.forEach { uid ->
+                        append("iptables -A FA_DNS -m owner --uid-owner $uid -j RETURN;")
+                    }
                     adguardV4.forEach { ip ->
                         append("iptables -A FA_DNS -p udp --dport 53 -d $ip -j RETURN;")
                         append("iptables -A FA_DNS -p tcp --dport 53 -d $ip -j RETURN;")
@@ -352,18 +380,21 @@ class AdGuardActivity : AppCompatActivity() {
                     append("iptables -A FA_DNS -p udp --dport 53 -j REJECT;")
                     append("iptables -A FA_DNS -p tcp --dport 53 -j REJECT;")
                     // Jangan blok 853 globally: private DNS/DoT perlu tetap bisa handshake saat network berubah.
-                    append("while iptables -C OUTPUT -j FA_DNS >/dev/null 2>&1; do iptables -D OUTPUT -j FA_DNS >/dev/null 2>&1 || break; done;")
+                    append("while iptables -C OUTPUT -j FA_DNS > /dev/null 2>&1; do iptables -D OUTPUT -j FA_DNS > /dev/null 2>&1 || break; done;")
                     append("iptables -I OUTPUT 1 -j FA_DNS;")
                     append(buildAdsFirewallEnableScript(mergedPatterns))
+                    if (bypassUids.isNotEmpty()) {
+                        append("echo bypass_uids=${bypassUids.joinToString(",")};")
+                    }
                     append("echo dns_firewall_lock=enabled;")
                 }
             } else {
-                "while iptables -C OUTPUT -j FA_DNS >/dev/null 2>&1; do iptables -D OUTPUT -j FA_DNS >/dev/null 2>&1 || break; done;" +
-                    "iptables -F FA_DNS >/dev/null 2>&1 || true;" +
-                    "iptables -X FA_DNS >/dev/null 2>&1 || true;" +
-                    "while iptables -C OUTPUT -j FA_ADS >/dev/null 2>&1; do iptables -D OUTPUT -j FA_ADS >/dev/null 2>&1 || break; done;" +
-                    "iptables -F FA_ADS >/dev/null 2>&1 || true;" +
-                    "iptables -X FA_ADS >/dev/null 2>&1 || true;" +
+                "while iptables -C OUTPUT -j FA_DNS > /dev/null 2>&1; do iptables -D OUTPUT -j FA_DNS > /dev/null 2>&1 || break; done;" +
+                    "iptables -F FA_DNS > /dev/null 2>&1 || true;" +
+                    "iptables -X FA_DNS > /dev/null 2>&1 || true;" +
+                    "while iptables -C OUTPUT -j FA_ADS > /dev/null 2>&1; do iptables -D OUTPUT -j FA_ADS > /dev/null 2>&1 || break; done;" +
+                    "iptables -F FA_ADS > /dev/null 2>&1 || true;" +
+                    "iptables -X FA_ADS > /dev/null 2>&1 || true;" +
                     "echo dns_firewall_lock=disabled;"
             }
             val result = withContext(Dispatchers.IO) { RootFirewallController.runRaw(cmd) }
@@ -372,6 +403,7 @@ class AdGuardActivity : AppCompatActivity() {
                     appendLine("DNS Firewall Lock enabled (safe mode).")
                     appendLine("- Block: DNS biasa (port 53) ke resolver non-whitelist")
                     appendLine("- Allow: AdGuard DNS + resolver aktif sistem + DoT 853")
+                    appendLine("- Per-app bypass: ${bypassUids.size} app dikecualikan")
                     appendLine("- Ad block level app: ON (hybrid + ML pattern scoring)")
                     appendLine("- Patterns loaded: ${mergedPatterns.size}")
                 } else {
@@ -417,6 +449,80 @@ class AdGuardActivity : AppCompatActivity() {
         }
     }
 
+    // ===================== BYPASS MANAGEMENT =====================
+
+    /**
+     * Parses the bypass package list from the input field and applies them.
+     * Format: satu package name per baris, atau comma-separated.
+     */
+    private fun syncBypassUidsAndApply() {
+        lifecycleScope.launch {
+            val rawInput = binding.bypassPackagesInput.text?.toString().orEmpty()
+            val packages = rawInput
+                .split(Regex("[,\n]+"))
+                .map { it.trim() }
+                .filter { it.isNotBlank() && it.contains('.') }
+                .toSet()
+
+            withContext(Dispatchers.IO) {
+                DnsBypassStore.saveBypassPackages(applicationContext, packages)
+            }
+            val uids = withContext(Dispatchers.IO) { DnsBypassStore.loadBypassUids(applicationContext) }
+
+            binding.outputText.text = buildString {
+                appendLine("=== DNS Bypass App List ===")
+                appendLine("Packages saved: ${packages.size}")
+                appendLine("UIDs resolved: ${uids.size}")
+                if (uids.isNotEmpty()) {
+                    appendLine("UIDs: ${uids.joinToString(", ")}")
+                }
+                appendLine()
+                appendLine("PENTING: Tekan 'Enable Lock' ulang agar rule iptables diperbarui.")
+                appendLine("App yang di-bypass akan:")
+                appendLine("  ✓ Tetap bisa akses internet normal")
+                appendLine("  ✓ Tetap diblokir ad SDK-nya via Xposed hook")
+                appendLine("  ✗ Tidak bypass Private DNS (tetap pakai AdGuard DNS)")
+            }
+            Toast.makeText(this@AdGuardActivity, "Bypass list diperbarui: ${packages.size} app", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun showBypassStatus() {
+        lifecycleScope.launch {
+            val statusJson = withContext(Dispatchers.IO) { DnsBypassStore.statusJson(applicationContext) }
+            val packages = DnsBypassStore.loadBypassPackages(applicationContext)
+            binding.bypassStatusText.text = buildString {
+                appendLine("=== Status DNS Bypass ===")
+                appendLine("Mode: ${statusJson.optString("mode", "selective")}")
+                appendLine("App di-bypass: ${statusJson.optInt("bypass_package_count")}")
+                appendLine("UIDs aktif: ${statusJson.optInt("bypass_uid_count")}")
+                if (packages.isNotEmpty()) {
+                    appendLine()
+                    appendLine("Daftar package:")
+                    packages.forEach { pkg -> appendLine("  • $pkg") }
+                }
+                if (packages.isEmpty()) {
+                    appendLine()
+                    appendLine("Belum ada app yang di-bypass.")
+                    appendLine("Contoh app yang perlu di-bypass:")
+                    appendLine("  • id.co.lazada (Lazada)")
+                    appendLine("  • com.tokopedia.tkpd (Tokopedia)")
+                    appendLine("  • com.shopee.id (Shopee)")
+                    appendLine("  • com.traveloka.android (Traveloka)")
+                    appendLine()
+                    appendLine("Catatan: Bypass hanya pada DNS lock (iptables).")
+                    appendLine("Xposed hook tetap memblokir SDK iklan di semua app.")
+                }
+            }
+            // Populate input field with existing packages
+            if (packages.isNotEmpty() && binding.bypassPackagesInput.text.isNullOrBlank()) {
+                binding.bypassPackagesInput.setText(packages.joinToString("\n"))
+            }
+        }
+    }
+
+    // ===================== PRIVATE DNS COMPAT LAYER =====================
+
     private fun sanitizeHost(value: String): String {
         val parsed = try {
             if (value.startsWith("http://") || value.startsWith("https://")) URI(value).host ?: value else value
@@ -437,17 +543,17 @@ class AdGuardActivity : AppCompatActivity() {
     }
 
     private fun buildAdsFirewallEnableScript(patterns: List<String>): String = buildString {
-        append("iptables -N FA_ADS >/dev/null 2>&1 || true;")
-        append("iptables -F FA_ADS >/dev/null 2>&1 || true;")
+        append("iptables -N FA_ADS > /dev/null 2>&1 || true;")
+        append("iptables -F FA_ADS > /dev/null 2>&1 || true;")
         append("iptables -A FA_ADS -m owner --uid-owner 0-9999 -j RETURN;")
         append("iptables -A FA_ADS -o lo -j RETURN;")
-        append("if iptables -m string -h >/dev/null 2>&1; then ")
+        append("if iptables -m string -h > /dev/null 2>&1; then ")
         patterns.forEach { pattern ->
-            append("iptables -A FA_ADS -p tcp --dport 80 -m string --algo bm --icase --string \"$pattern\" -j DROP >/dev/null 2>&1 || true;")
-            append("iptables -A FA_ADS -p tcp --dport 443 -m string --algo bm --icase --string \"$pattern\" -j DROP >/dev/null 2>&1 || true;")
+            append("iptables -A FA_ADS -p tcp --dport 80 -m string --algo bm --icase --string \"$pattern\" -j DROP > /dev/null 2>&1 || true;")
+            append("iptables -A FA_ADS -p tcp --dport 443 -m string --algo bm --icase --string \"$pattern\" -j DROP > /dev/null 2>&1 || true;")
         }
         append("fi;")
-        append("while iptables -C OUTPUT -j FA_ADS >/dev/null 2>&1; do iptables -D OUTPUT -j FA_ADS >/dev/null 2>&1 || break; done;")
+        append("while iptables -C OUTPUT -j FA_ADS > /dev/null 2>&1; do iptables -D OUTPUT -j FA_ADS > /dev/null 2>&1 || break; done;")
         append("iptables -I OUTPUT 1 -j FA_ADS;")
     }
 }
