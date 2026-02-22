@@ -23,6 +23,9 @@ class HybridAdHook : IXposedHookLoadPackage {
         "securepubads.g.doubleclick.net",
         // Mobile Ad SDKs
         "unityads.unity3d.com",
+        "iads.unity3d.com",        // UnityAds via IronSource mediation
+        "gw-is.iads.unity3d.com",  // UnityAds gateway via IS
+        "auction.unityads.unity3d.com",
         "applovin",
         "ironsrc",
         "vungle",
@@ -109,6 +112,7 @@ class HybridAdHook : IXposedHookLoadPackage {
             hookWebViewLoads(lpparam)
             hookWebViewClientIntercept(lpparam)
             hookAdSdkLoads(lpparam)
+            hookIronSourceAdapters(lpparam)  // Dedicated IronSource mediation adapter hooks
             XposedBridge.log("FA.HybridAdHook init ok in ${lpparam.packageName}")
         } catch (t: Throwable) {
             XposedBridge.log("FA.HybridAdHook init failed for $pkg: ${t.message}")
@@ -122,6 +126,194 @@ class HybridAdHook : IXposedHookLoadPackage {
             XposedBridge.log("FA.DnsHideHook init failed for $pkg: ${t.message}")
         }
     }
+
+    /**
+     * Hooks IronSource mediation adapters for all partner networks.
+     *
+     * Context: When you see logcat "impression-east.liftoff.io/ironsource/beacon",
+     * the ad has ALREADY rendered via native IronSource→Liftoff adapter, not WebView.
+     * The WebView intercept only catches the impression beacon (which is too late).
+     *
+     * Solution: Hook the IronSource mediation adapter classes directly so:
+     *   1. Adapter's loadAd()/showAd() returns null before ad is fetched
+     *   2. IronSource's own banner loading pipeline is terminated
+     *   3. Covers both old (is4- prefix) and new SDK adapter namespaces
+     */
+    private fun hookIronSourceAdapters(lpparam: XC_LoadPackage.LoadPackageParam) {
+        val cl = lpparam.classLoader
+
+        // ─── IronSource Liftoff Monetize adapter (most common for Liftoff via IS) ───
+        val liftoffAdapterClasses = listOf(
+            "com.ironsource.adapters.liftoffmonetize.LiftoffMonetizeBannerAdapter",
+            "com.ironsource.adapters.liftoffmonetize.LiftoffMonetizeInterstitialAdapter",
+            "com.ironsource.adapters.liftoffmonetize.LiftoffMonetizeRewardedVideoAdapter",
+            "com.ironsource.adapters.liftoffmonetize.LiftoffMonetizeNativeAdapter",
+            // Older namespace
+            "com.ironsource.adapters.vungle.VungleBannerAdapter",
+            "com.ironsource.adapters.vungle.VungleInterstitialAdapter",
+            "com.ironsource.adapters.vungle.VungleRewardedVideoAdapter",
+        )
+        val adapterLoadMethods = listOf("loadAd", "showAd", "fetchAd", "renderAd", "onAdReadyToShow", "requestAd")
+        liftoffAdapterClasses.forEach { className ->
+            val clazz = runCatching { Class.forName(className, false, cl) }.getOrNull() ?: return@forEach
+            adapterLoadMethods.forEach { method ->
+                runCatching {
+                    XposedBridge.hookAllMethods(clazz, method, object : XC_MethodHook() {
+                        override fun beforeHookedMethod(param: MethodHookParam) {
+                            param.result = null
+                            XposedBridge.log("FA.HybridAdHook blocked IronSource adapter ${className}#${method} in ${lpparam.packageName}")
+                        }
+                    })
+                }
+            }
+        }
+
+        // ─── IronSource AppLovin adapter ───
+        val appLovinAdapterClasses = listOf(
+            "com.ironsource.adapters.applovin.AppLovinBannerAdapter",
+            "com.ironsource.adapters.applovin.AppLovinInterstitialAdapter",
+            "com.ironsource.adapters.applovin.AppLovinRewardedVideoAdapter",
+        )
+        appLovinAdapterClasses.forEach { className ->
+            val clazz = runCatching { Class.forName(className, false, cl) }.getOrNull() ?: return@forEach
+            adapterLoadMethods.forEach { method ->
+                runCatching {
+                    XposedBridge.hookAllMethods(clazz, method, object : XC_MethodHook() {
+                        override fun beforeHookedMethod(param: MethodHookParam) {
+                            param.result = null
+                            XposedBridge.log("FA.HybridAdHook blocked IS-AppLovin adapter ${method} in ${lpparam.packageName}")
+                        }
+                    })
+                }
+            }
+        }
+
+        // ─── IronSource UnityAds adapter ───
+        val unityAdapterClasses = listOf(
+            "com.ironsource.adapters.unityads.UnityAdsBannerAdapter",
+            "com.ironsource.adapters.unityads.UnityAdsInterstitialAdapter",
+            "com.ironsource.adapters.unityads.UnityAdsRewardedVideoAdapter",
+        )
+        unityAdapterClasses.forEach { className ->
+            val clazz = runCatching { Class.forName(className, false, cl) }.getOrNull() ?: return@forEach
+            adapterLoadMethods.forEach { method ->
+                runCatching {
+                    XposedBridge.hookAllMethods(clazz, method, object : XC_MethodHook() {
+                        override fun beforeHookedMethod(param: MethodHookParam) {
+                            param.result = null
+                        }
+                    })
+                }
+            }
+        }
+
+        // ─── IronSource AdMob/GMA adapter ───
+        val admobAdapterClasses = listOf(
+            "com.ironsource.adapters.admob.AdMobBannerAdapter",
+            "com.ironsource.adapters.admob.AdMobInterstitialAdapter",
+            "com.ironsource.adapters.admob.AdMobRewardedVideoAdapter",
+        )
+        admobAdapterClasses.forEach { className ->
+            val clazz = runCatching { Class.forName(className, false, cl) }.getOrNull() ?: return@forEach
+            adapterLoadMethods.forEach { method ->
+                runCatching {
+                    XposedBridge.hookAllMethods(clazz, method, object : XC_MethodHook() {
+                        override fun beforeHookedMethod(param: MethodHookParam) {
+                            param.result = null
+                        }
+                    })
+                }
+            }
+        }
+
+        // ─── IronSource BannerView — block at the View level so nothing renders ───
+        runCatching {
+            val bannerViewClazz = Class.forName(
+                "com.ironsource.mediationsdk.ISBannerLayout",
+                false, cl
+            )
+            XposedBridge.hookAllMethods(bannerViewClazz, "addView", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    // Only block if the added view appears to be an ad view
+                    param.result = null
+                    XposedBridge.log("FA.HybridAdHook blocked ISBannerLayout.addView in ${lpparam.packageName}")
+                }
+            })
+        }
+
+        // ─── IronSource network manager — cuts all ad calls at transport level ───
+        runCatching {
+            val netMgrClazz = Class.forName(
+                "com.ironsource.mediationsdk.sdk.ISMediationManager",
+                false, cl
+            )
+            listOf("initBanners", "loadBanner", "showBanner",
+                "initInterstitial", "loadInterstitial", "showInterstitial",
+                "initRewardedVideo", "loadRewardedVideo", "showRewardedVideo").forEach { method ->
+                runCatching {
+                    XposedBridge.hookAllMethods(netMgrClazz, method, object : XC_MethodHook() {
+                        override fun beforeHookedMethod(param: MethodHookParam) {
+                            param.result = null
+                            XposedBridge.log("FA.HybridAdHook blocked IS MediationManager.$method in ${lpparam.packageName}")
+                        }
+                    })
+                }
+            }
+        }
+
+        // ─── IronSource Banner Presenter / internal refresh — stops retry loop ───
+        // When IronSource#loadBanner returns null, IS internally retries via
+        // BannerPresenter. Block at origination to stop retry spam.
+        val isBannerInternalClasses = listOf(
+            "com.ironsource.mediationsdk.BannerLayout",
+            "com.ironsource.mediationsdk.ISBannerLayout",
+            // Placement models drive retry scheduling
+            "com.ironsource.mediationsdk.placement.BannerPlacementModel",
+            "com.ironsource.mediationsdk.placement.PlacementManager",
+            // Banner Presenter drives the actual ad fetch
+            "com.ironsource.sdk.presenter.BannerPresenter",
+        )
+        isBannerInternalClasses.forEach { className ->
+            val clazz = runCatching { Class.forName(className, false, cl) }.getOrNull() ?: return@forEach
+            listOf("startAutoRefresh", "stopAutoRefresh", "loadAd",
+                "showAd", "refresh", "fetchAd", "loadNextAd").forEach { method ->
+                runCatching {
+                    XposedBridge.hookAllMethods(clazz, method, object : XC_MethodHook() {
+                        override fun beforeHookedMethod(param: MethodHookParam) {
+                            param.result = null
+                        }
+                    })
+                }
+            }
+        }
+
+        // ─── UnityAds via IronSource mediator ───
+        // IronSource delegates to UnityAds internally via its own adapter bridge.
+        // Hook the UnityAds SDK classes that IronSource calls.
+        val unityAdsDirectClasses = listOf(
+            "com.unity3d.ads.UnityAds",
+            "com.unity3d.services.banners.UnityBanners",
+            "com.unity3d.services.banners.BannerView",
+            "com.unity3d.ads.IUnityAdsLoadListener",
+        )
+        unityAdsDirectClasses.forEach { className ->
+            val clazz = runCatching { Class.forName(className, false, cl) }.getOrNull() ?: return@forEach
+            listOf("load", "show", "loadBanner", "destroy").forEach { method ->
+                runCatching {
+                    XposedBridge.hookAllMethods(clazz, method, object : XC_MethodHook() {
+                        override fun beforeHookedMethod(param: MethodHookParam) {
+                            param.result = null
+                            XposedBridge.log("FA.HybridAdHook blocked UnityAds direct $className#$method in ${lpparam.packageName}")
+                        }
+                    })
+                }
+            }
+        }
+    }
+
+
+
+
 
     private fun hookAdSdkLoads(lpparam: XC_LoadPackage.LoadPackageParam) {
         val sdkHooks = listOf(
@@ -142,8 +334,17 @@ class HybridAdHook : IXposedHookLoadPackage {
             "com.applovin.sdk.AppLovinAdService" to listOf("loadNextAd", "loadNextAdForZoneId"),
             // Unity Ads
             "com.unity3d.ads.UnityAds" to listOf("load", "show"),
-            // IronSource
-            "com.ironsource.mediationsdk.IronSource" to listOf("loadInterstitial", "showInterstitial", "loadRewardedVideo", "showRewardedVideo"),
+            // IronSource core
+            "com.ironsource.mediationsdk.IronSource" to listOf(
+                "loadInterstitial", "showInterstitial",
+                "loadRewardedVideo", "showRewardedVideo",
+                "loadBanner", "displayBanner", "destroyBanner",
+                "loadISDemandOnlyInterstitial", "showISDemandOnlyInterstitial",
+                "loadISDemandOnlyRewardedVideo", "showISDemandOnlyRewardedVideo",
+            ),
+            // NOTE: Do NOT hook ISBannerSize#getDescription — it's a data getter
+            // and returning null causes IronSource internal retry loop (spam in logcat).
+            // The banner is already blocked at loadBanner() level above.
             // Vungle (legacy + new)
             "com.vungle.warren.Vungle" to listOf("loadAd", "playAd"),
             "com.vungle.warren.Banners" to listOf("loadBanner"),
@@ -151,6 +352,7 @@ class HybridAdHook : IXposedHookLoadPackage {
             "com.vungle.ads.BaseFullscreenAd" to listOf("loadAd", "show"),
             "com.vungle.ads.InterstitialAd" to listOf("load", "show"),
             "com.vungle.ads.RewardedAd" to listOf("load", "show"),
+            "com.vungle.ads.BannerAd" to listOf("load", "getBannerView"),
             // Meta Audience Network
             "com.facebook.ads.AdView" to listOf("loadAd"),
             "com.facebook.ads.InterstitialAd" to listOf("loadAd", "show"),
@@ -167,12 +369,15 @@ class HybridAdHook : IXposedHookLoadPackage {
             "com.fyber.inneractive.sdk.api.InneractiveAdSpot" to listOf("requestAd"),
             // HyprMX
             "com.hyprmx.android.sdk.HyprMX" to listOf("loadAd", "showAd"),
-            // Liftoff / Vungle
+            // Liftoff SDK (standalone)
             "com.liftoff.publisher.LoHook" to listOf("loadAd"),
+            "com.liftoff.publisher.Ad" to listOf("load", "show"),
+            "com.liftoff.publisher.AdRequestManager" to listOf("requestAd", "requestAds"),
         )
 
         sdkHooks.forEach { (className, methods) ->
             val clazz = runCatching { Class.forName(className, false, lpparam.classLoader) }.getOrNull() ?: return@forEach
+
             methods.forEach { method ->
                 runCatching {
                     XposedBridge.hookAllMethods(clazz, method, object : XC_MethodHook() {
