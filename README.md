@@ -1,6 +1,6 @@
 # Firewall Agent Root
 
-Firewall Agent Root adalah aplikasi Android berbasis root untuk kontrol akses jaringan per aplikasi, proteksi panggilan, dan proteksi iklan secara hybrid.
+Firewall Agent Root adalah aplikasi Android berbasis root untuk kontrol akses jaringan per aplikasi, proteksi panggilan, proteksi iklan hybrid, dan deteksi Evil Twin Wi-Fi.
 
 Arsitektur project:
 
@@ -48,6 +48,18 @@ Kemampuan:
 - Statistik jumlah ads blocked
 - Support ping provider DNS + pilih DNS tercepat
 
+### 4) Evil Twin Detection
+
+Fitur pemantauan Wi-Fi untuk membantu mendeteksi indikasi access point palsu (Evil Twin) berdasarkan anomali jaringan.
+
+Kemampuan:
+
+- Scan jaringan Wi-Fi sekitar dan analisis indikator risiko
+- Monitoring latar belakang (Start/Stop Monitor)
+- Klasifikasi tingkat ancaman: Low, Medium, High, Critical
+- Ringkasan total jaringan dan jaringan mencurigakan
+- Simpan laporan hasil scan ke `Documents/FirewallAgent`
+
 ## Fitur Pelengkap
 
 - Traffic Monitor (grafik realtime + statistik per app)
@@ -83,6 +95,7 @@ Kemampuan:
 2. Atur rule FAB (jaringan + upload/download) sesuai kebutuhan
 3. Tekan **Apply** untuk menerapkan ke iptables
 4. Jika pakai Ads Guard hybrid, aktifkan LSPosed scope untuk app target
+5. Jika pakai Evil Twin Detection, buka menu fitur lalu jalankan scan/monitoring
 
 ## Build (Developer)
 
