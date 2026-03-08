@@ -10,11 +10,9 @@ Arsitektur project:
 ## Fitur Inti
 
 ### 1) FAB (Firewall Access Board)
-
 Fitur utama untuk kontrol akses internet per aplikasi secara granular.
 
 Kemampuan:
-
 - Rule per aplikasi berbasis UID
 - Kolom rule jaringan: LAN/Local, WiFi, Seluler, VPN, Bluetooth, Tor
 - Kolom kontrol arah trafik: Download dan Upload
@@ -25,11 +23,9 @@ Kemampuan:
 - Auto cleanup orphan rules ketika app di-uninstall
 
 ### 2) Call Guard
-
 Fitur proteksi panggilan untuk meminimalkan spam/nomor tidak dikenal.
 
 Kemampuan:
-
 - Whitelist dan blacklist nomor
 - Blokir panggilan nomor tak dikenal (mode konfigurasi)
 - Integrasi call-screening (tergantung kompatibilitas ROM/vendor)
@@ -37,11 +33,9 @@ Kemampuan:
 - Risk scoring dasar untuk bantu prioritas nomor berisiko
 
 ### 3) Ads Guard
-
 Proteksi iklan menggunakan pendekatan hybrid, bukan hanya 1 lapisan.
 
 Kemampuan:
-
 - DNS-based filtering (Private DNS / DoH provider)
 - DNS lock untuk mencegah bypass DNS biasa
 - Hybrid app-level ad blocking via LSPosed hook (opsional)
@@ -49,11 +43,9 @@ Kemampuan:
 - Support ping provider DNS + pilih DNS tercepat
 
 ### 4) Evil Twin Detection
-
 Fitur pemantauan Wi-Fi untuk membantu mendeteksi indikasi access point palsu (Evil Twin) berdasarkan anomali jaringan.
 
 Kemampuan:
-
 - Scan jaringan Wi-Fi sekitar dan analisis indikator risiko
 - Monitoring latar belakang (Start/Stop Monitor)
 - Klasifikasi tingkat ancaman: Low, Medium, High, Critical
@@ -67,54 +59,33 @@ Kemampuan:
 - Background keep-alive service + autostart setelah boot
 - Logging dan telemetry untuk troubleshooting
 
-## Kebutuhan
+## Highlight patch terbaru (v1.0.6)
 
-- Android device yang sudah root
-- Magisk aktif
-- LSPosed (opsional, untuk Ads Guard hybrid hook)
-- ADB (opsional, untuk debugging)
+- Stabilitas init hook dan logging diagnostik ditingkatkan.
+- Hardening anti-redirect browser/store/installer diperketat.
+- Perbaikan blank page pada halaman hybrid tertentu (whitelist renderer inti).
+- Optimasi anti-lag pada loop scheduler ads agresif.
 
-## Instalasi (User)
+## Instalasi & Penggunaan (User)
 
-### 1) Install modul Magisk
-
-1. Buka Magisk
-2. Masuk menu **Modules**
-3. Install modul dari folder `module/` (zip-kan sesuai struktur modul Magisk bila perlu)
-4. Reboot device
-
-### 2) Install aplikasi Android
-
-1. Install APK dari `android-app`
-2. Buka Firewall Agent Root
+1. Install APK, download [di sini](https://github.com/ndeso17/Firewall-Agent/releases/download/v1.0.6/app-publik-debug.apk)
+2. Buka **Firewall Agent Root**
 3. Grant akses root saat diminta
+4. Aktifkan Firewall Agent
+5. Atur rule FAB (jaringan + upload/download) sesuai kebutuhan
+6. Tekan **Apply** untuk menerapkan ke `iptables`
+7. Jika pakai Ads Guard hybrid, aktifkan LSPosed scope untuk app target
 
-### 3) Setup awal
-
-1. Aktifkan Firewall Agent
-2. Atur rule FAB (jaringan + upload/download) sesuai kebutuhan
-3. Tekan **Apply** untuk menerapkan ke iptables
-4. Jika pakai Ads Guard hybrid, aktifkan LSPosed scope untuk app target
-5. Jika pakai Evil Twin Detection, buka menu fitur lalu jalankan scan/monitoring
-
-## Build (Developer)
-
+Contoh install via ADB:
 ```bash
-cd android-app
-JAVA_HOME=/home/mrksvt/android-studio/jbr ./gradlew assembleDebug
-JAVA_HOME=/home/mrksvt/android-studio/jbr ./gradlew assembleRelease
+adb install -r app-publik-debug.apk
 ```
 
-Output APK:
+## Catatan penting
 
-- Debug: `android-app/app/build/outputs/apk/debug/`
-- Release: `android-app/app/build/outputs/apk/release/`
-
-## Catatan
-
-- Salah konfigurasi rule dapat memutus akses internet app tertentu.
-- Selalu backup profil/rule sebelum perubahan besar.
-- Beberapa fitur telephony sangat bergantung pada ROM/vendor/device.
+- Beberapa fitur hook membutuhkan LSPosed/Xposed aktif.
+- Fitur yang memerlukan root tetap membutuhkan akses root (Magisk/KSU).
+- Untuk keamanan publik, selalu prioritaskan rilis APK publik terbaru (`app-publik-debug.apk`).
 
 ## Donasi
 
