@@ -105,7 +105,8 @@ class MainActivity : AppCompatActivity() {
     private val bulkSnapshotKey = "last_bulk_snapshot"
     private val sessionNewPackages = mutableListOf<String>()
     private var packageEventsRegistered = false
-    private var applyProgressController: LoadingDialogController? = null
+    private var applyProgressDialog: AlertDialog? = null
+    private var applyProgressState: MutableState<ApplyProgressModel>? = null
     private var backendBusyDialog: AlertDialog? = null
     private lateinit var startupLoadingDialog: LoadingDialogController
     private var startupLoadingActive: Boolean = false
@@ -243,7 +244,7 @@ class MainActivity : AppCompatActivity() {
             forceCleanupOrphansOnOpen()
             requestInventorySync("onStart")
         }
-        if (applyInProgress && applyProgressController?.isShowingProgress != true) {
+        if (applyInProgress && applyProgressDialog == null) {
             showApplyProgressDialog(
                 latestApplyProgress.processed,
                 latestApplyProgress.totalUid,
@@ -1323,16 +1324,22 @@ class MainActivity : AppCompatActivity() {
                         .setTitle("⚠️ Matikan Firewall?")
                         .setMessage("Apakah Anda yakin ingin mematikan firewall? Perangkat Anda akan rentan terhadap serangan Evil Twin, malware, dan situs perjudian.")
                         .setPositiveButton("Ya, Matikan") { _, _ ->
-                            runAction("Disable Firewall", 104) { RootFirewallController.disable() }
+                            runAction("Disable Firewall", 104) { loading ->
+                                loading.updateProgress("Disable Firewall", 50, 100, "Membersihkan rantai iptables...")
+                                RootFirewallController.disable()
+                            }
                         }
                         .setNegativeButton("Batal") { dialog, _ ->
                             dialog.dismiss()
                         }
                         .show()
                 } else {
-                    runAction("Enable Firewall", 103) {
+                    runAction("Enable Firewall", 103) { loading ->
+                        loading.updateProgress("Enable Firewall", 30, 100, "Mengaktifkan layanan root firewall...")
                         val enableResult = RootFirewallController.enable()
                         if (!enableResult.ok) return@runAction enableResult
+                        
+                        loading.updateProgress("Enable Firewall", 65, 100, "Menyuntikkan iptables rules...")
                         val applyResult = RootFirewallController.applyAppRules(buildManagedRules())
                         mergeExecResults(enableResult, applyResult)
                     }
@@ -1682,7 +1689,7 @@ class MainActivity : AppCompatActivity() {
             }
             latestApplyProgress = ApplyProgressModel(35, 100, totalApps, "Menerapkan perubahan rules...")
             if (appInForeground) {
-                if (applyProgressController?.isShowingProgress != true) {
+                if (applyProgressDialog == null) {
                     showApplyProgressDialog(35, 100, totalApps, "Menerapkan perubahan rules...")
                 } else {
                     updateApplyProgressDialog(35, 100, totalApps, "Menerapkan perubahan rules...")
@@ -1706,27 +1713,26 @@ class MainActivity : AppCompatActivity() {
                             "Menerapkan perubahan rules ($processed/$total)",
                         )
                         if (appInForeground) {
+                            if (applyProgressDialog == null) {
+                                showApplyProgressDialog(
+                                    percent,
+                                    100,
+                                    totalApps,
+                                    "Menerapkan perubahan rules ($processed/$total)",
+                                )
+                            }
                             val now = System.currentTimeMillis()
                             val shouldUiUpdate = processed == total ||
                                 processed <= 1 ||
                                 processed - lastProgressUiProcessed >= 2 ||
                                 now - lastProgressUiAtMs >= 90
                             if (shouldUiUpdate) {
-                                if (applyProgressController?.isShowingProgress != true) {
-                                    showApplyProgressDialog(
+                                updateApplyProgressDialog(
                                     percent,
                                     100,
                                     totalApps,
                                     "Menerapkan perubahan rules ($processed/$total)",
                                 )
-                                } else {
-                                    updateApplyProgressDialog(
-                                        percent,
-                                        100,
-                                        totalApps,
-                                        "Menerapkan perubahan rules ($processed/$total)",
-                                    )
-                                }
                                 lastProgressUiProcessed = processed
                                 lastProgressUiAtMs = now
                             }
@@ -1825,10 +1831,30 @@ class MainActivity : AppCompatActivity() {
         totalApps: Int,
         phase: String = "Memproses...",
     ) {
-        if (applyProgressController == null) {
-            applyProgressController = LoadingDialogController(this)
+        dismissApplyProgressDialog()
+        val state = mutableStateOf(ApplyProgressModel(processed, totalUid, totalApps, phase))
+        applyProgressState = state
+        val content = ComposeView(this).apply {
+            setContent {
+                MaterialTheme {
+                    ApplyProgressContent(state.value)
+                }
+            }
         }
-        applyProgressController?.showProgress("Applying Rules", processed, totalUid, phase)
+        val dlg = AlertDialog.Builder(this)
+            .setView(content)
+            .setCancelable(false)
+            .create()
+        dlg.show()
+        dlg.window?.setFlags(
+            android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+        )
+        dlg.window?.setFlags(
+            android.view.WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+            android.view.WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+        )
+        applyProgressDialog = dlg
     }
 
     private fun updateApplyProgressDialog(
@@ -1837,21 +1863,24 @@ class MainActivity : AppCompatActivity() {
         totalApps: Int,
         phase: String = "Memproses...",
     ) {
-        if (applyProgressController == null) {
-            applyProgressController = LoadingDialogController(this)
-        }
-        applyProgressController?.updateProgress("Applying Rules", processed, totalUid, phase)
+        applyProgressState?.value = ApplyProgressModel(processed, totalUid, totalApps, phase)
     }
 
     private fun dismissApplyProgressDialog() {
-        applyProgressController?.dismissProgress()
+        applyProgressDialog?.dismiss()
+        applyProgressDialog = null
+        applyProgressState = null
     }
 
     private fun showApplyResultDialog(title: String, message: String) {
-        if (applyProgressController == null) {
-            applyProgressController = LoadingDialogController(this)
-        }
-        applyProgressController?.showSuccess(title, message)
+        AlertDialog.Builder(this@MainActivity)
+            .setTitle(title)
+            .setMessage(message)
+            .setCancelable(false)
+            .setPositiveButton("OK") { _, _ ->
+                dismissApplyProgressDialog()
+            }
+            .show()
     }
 
     private fun buildAllRules(): List<AppNetRule> {
@@ -1992,7 +2021,7 @@ class MainActivity : AppCompatActivity() {
             .apply()
     }
 
-    private fun runAction(title: String, notifId: Int, block: () -> ExecResult) {
+    private fun runAction(title: String, notifId: Int, block: suspend (LoadingDialogController) -> ExecResult) {
         lifecycleScope.launch {
             val rootedNow = withContext(Dispatchers.IO) { RootFirewallController.checkRoot() }
             rootAvailable = rootedNow
@@ -2001,8 +2030,24 @@ class MainActivity : AppCompatActivity() {
                 showOutput("Root belum aktif. Grant akses root di Magisk/KSU.")
                 return@launch
             }
+            
+            val loading = LoadingDialogController(this@MainActivity)
+            customLoadingActive = true
+            dismissBackendBusyDialog()
+            loading.showProgress(
+                title = title,
+                processed = 10,
+                total = 100,
+                phase = "Menyiapkan $title...",
+            )
             setBusy(true)
-            val result = withContext(Dispatchers.IO) { block() }
+            
+            val result = try {
+                withContext(Dispatchers.IO) { block(loading) }
+            } finally {
+                loading.updateProgress(title, 90, 100, "Menyimpan preferensi layanan...")
+            }
+            
             val serviceStatus = withContext(Dispatchers.IO) { RootFirewallController.status() }
             cacheServiceState(serviceStatus)
             updateStatusFab(true, result.ok)
@@ -2020,6 +2065,14 @@ class MainActivity : AppCompatActivity() {
                 notifId,
             )
             setBusy(false)
+            customLoadingActive = false
+            loading.updateProgress(title, 100, 100, "Selesai")
+            loading.dismissProgress()
+            if (result.ok) {
+                loading.showSuccess(title, "Aksi '$title' berhasil diterapkan.")
+            } else {
+                Toast.makeText(this@MainActivity, "Gagal: $title (code ${result.code})", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -2366,4 +2419,63 @@ private object applyState {
     var pendingSummary: PendingApplySummary? = null
 }
 
+@Composable
+private fun ApplyProgressContent(progress: ApplyProgressModel) {
+    val safeTotal = if (progress.totalUid <= 0) 1 else progress.totalUid
+    val targetProgress = (progress.processed.toFloat() / safeTotal.toFloat()).coerceIn(0f, 1f)
+    val percent = (targetProgress * 100f).roundToInt().coerceIn(0, 100)
+    val animatedProgress by animateFloatAsState(
+        targetValue = targetProgress,
+        animationSpec = tween(durationMillis = 220, easing = LinearOutSlowInEasing),
+        label = "apply_progress",
+    )
 
+    Column(
+        modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Surface(
+            color = Color(0xFF1F2430),
+            tonalElevation = 2.dp,
+            shadowElevation = 6.dp,
+        ) {
+            Column(
+                modifier = androidx.compose.ui.Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    text = "Applying Rules",
+                    fontSize = 30.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFFFFFFFF),
+                )
+                Spacer(modifier = androidx.compose.ui.Modifier.height(14.dp))
+                Box(contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(
+                        progress = { animatedProgress },
+                        strokeWidth = 8.dp,
+                        color = Color(0xFF22C55E),
+                        trackColor = Color(0xFF3B4252),
+                        modifier = androidx.compose.ui.Modifier.size(112.dp),
+                    )
+                    Text(
+                        text = if (percent >= 100) "✓" else "$percent%",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (percent >= 100) Color(0xFF22C55E) else Color(0xFFFFFFFF),
+                    )
+                }
+                Spacer(modifier = androidx.compose.ui.Modifier.height(14.dp))
+                Text(
+                    text = progress.phase,
+                    fontSize = 14.sp,
+                    color = Color(0xFFFFFFFF),
+                )
+            }
+        }
+    }
+}
