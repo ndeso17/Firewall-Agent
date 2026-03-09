@@ -142,6 +142,9 @@ private fun LoadingSuccessContent(title: String, message: String, onOk: () -> Un
 class LoadingDialogController(private val activity: AppCompatActivity) {
     private var progressDialog: AlertDialog? = null
     private var progressState: MutableState<LoadingProgressModel>? = null
+    
+    val isShowingProgress: Boolean
+        get() = progressDialog != null
 
     fun showProgress(title: String, processed: Int, total: Int, phase: String) {
         if (progressDialog == null) {

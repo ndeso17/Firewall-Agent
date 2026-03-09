@@ -105,8 +105,7 @@ class MainActivity : AppCompatActivity() {
     private val bulkSnapshotKey = "last_bulk_snapshot"
     private val sessionNewPackages = mutableListOf<String>()
     private var packageEventsRegistered = false
-    private var applyProgressDialog: AlertDialog? = null
-    private var applyProgressState: MutableState<ApplyProgressModel>? = null
+    private var applyProgressController: LoadingDialogController? = null
     private var backendBusyDialog: AlertDialog? = null
     private lateinit var startupLoadingDialog: LoadingDialogController
     private var startupLoadingActive: Boolean = false
@@ -244,7 +243,7 @@ class MainActivity : AppCompatActivity() {
             forceCleanupOrphansOnOpen()
             requestInventorySync("onStart")
         }
-        if (applyInProgress && applyProgressDialog == null) {
+        if (applyInProgress && applyProgressController?.isShowingProgress != true) {
             showApplyProgressDialog(
                 latestApplyProgress.processed,
                 latestApplyProgress.totalUid,
@@ -1683,7 +1682,7 @@ class MainActivity : AppCompatActivity() {
             }
             latestApplyProgress = ApplyProgressModel(35, 100, totalApps, "Menerapkan perubahan rules...")
             if (appInForeground) {
-                if (applyProgressDialog == null) {
+                if (applyProgressController?.isShowingProgress != true) {
                     showApplyProgressDialog(35, 100, totalApps, "Menerapkan perubahan rules...")
                 } else {
                     updateApplyProgressDialog(35, 100, totalApps, "Menerapkan perubahan rules...")
@@ -1707,26 +1706,27 @@ class MainActivity : AppCompatActivity() {
                             "Menerapkan perubahan rules ($processed/$total)",
                         )
                         if (appInForeground) {
-                            if (applyProgressDialog == null) {
-                                showApplyProgressDialog(
-                                    percent,
-                                    100,
-                                    totalApps,
-                                    "Menerapkan perubahan rules ($processed/$total)",
-                                )
-                            }
                             val now = System.currentTimeMillis()
                             val shouldUiUpdate = processed == total ||
                                 processed <= 1 ||
                                 processed - lastProgressUiProcessed >= 2 ||
                                 now - lastProgressUiAtMs >= 90
                             if (shouldUiUpdate) {
-                                updateApplyProgressDialog(
+                                if (applyProgressController?.isShowingProgress != true) {
+                                    showApplyProgressDialog(
                                     percent,
                                     100,
                                     totalApps,
                                     "Menerapkan perubahan rules ($processed/$total)",
                                 )
+                                } else {
+                                    updateApplyProgressDialog(
+                                        percent,
+                                        100,
+                                        totalApps,
+                                        "Menerapkan perubahan rules ($processed/$total)",
+                                    )
+                                }
                                 lastProgressUiProcessed = processed
                                 lastProgressUiAtMs = now
                             }
@@ -1825,30 +1825,10 @@ class MainActivity : AppCompatActivity() {
         totalApps: Int,
         phase: String = "Memproses...",
     ) {
-        dismissApplyProgressDialog()
-        val state = mutableStateOf(ApplyProgressModel(processed, totalUid, totalApps, phase))
-        applyProgressState = state
-        val content = ComposeView(this).apply {
-            setContent {
-                MaterialTheme {
-                    ApplyProgressContent(state.value)
-                }
-            }
+        if (applyProgressController == null) {
+            applyProgressController = LoadingDialogController(this)
         }
-        val dlg = AlertDialog.Builder(this)
-            .setView(content)
-            .setCancelable(false)
-            .create()
-        dlg.show()
-        dlg.window?.setFlags(
-            android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-            android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-        )
-        dlg.window?.setFlags(
-            android.view.WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
-            android.view.WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
-        )
-        applyProgressDialog = dlg
+        applyProgressController?.showProgress("Applying Rules", processed, totalUid, phase)
     }
 
     private fun updateApplyProgressDialog(
@@ -1857,24 +1837,21 @@ class MainActivity : AppCompatActivity() {
         totalApps: Int,
         phase: String = "Memproses...",
     ) {
-        applyProgressState?.value = ApplyProgressModel(processed, totalUid, totalApps, phase)
+        if (applyProgressController == null) {
+            applyProgressController = LoadingDialogController(this)
+        }
+        applyProgressController?.updateProgress("Applying Rules", processed, totalUid, phase)
     }
 
     private fun dismissApplyProgressDialog() {
-        applyProgressDialog?.dismiss()
-        applyProgressDialog = null
-        applyProgressState = null
+        applyProgressController?.dismissProgress()
     }
 
     private fun showApplyResultDialog(title: String, message: String) {
-        AlertDialog.Builder(this@MainActivity)
-            .setTitle(title)
-            .setMessage(message)
-            .setCancelable(false)
-            .setPositiveButton("OK") { _, _ ->
-                dismissApplyProgressDialog()
-            }
-            .show()
+        if (applyProgressController == null) {
+            applyProgressController = LoadingDialogController(this)
+        }
+        applyProgressController?.showSuccess(title, message)
     }
 
     private fun buildAllRules(): List<AppNetRule> {
@@ -2389,63 +2366,4 @@ private object applyState {
     var pendingSummary: PendingApplySummary? = null
 }
 
-@Composable
-private fun ApplyProgressContent(progress: ApplyProgressModel) {
-    val safeTotal = if (progress.totalUid <= 0) 1 else progress.totalUid
-    val targetProgress = (progress.processed.toFloat() / safeTotal.toFloat()).coerceIn(0f, 1f)
-    val percent = (targetProgress * 100f).roundToInt().coerceIn(0, 100)
-    val animatedProgress by animateFloatAsState(
-        targetValue = targetProgress,
-        animationSpec = tween(durationMillis = 220, easing = LinearOutSlowInEasing),
-        label = "apply_progress",
-    )
 
-    Column(
-        modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Surface(
-            color = Color(0xFF1F2430),
-            tonalElevation = 2.dp,
-            shadowElevation = 6.dp,
-        ) {
-            Column(
-                modifier = androidx.compose.ui.Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 18.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Text(
-                    text = "Applying Rules",
-                    fontSize = 30.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFFFFFFFF),
-                )
-                Spacer(modifier = androidx.compose.ui.Modifier.height(14.dp))
-                Box(contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(
-                        progress = { animatedProgress },
-                        strokeWidth = 8.dp,
-                        color = Color(0xFF22C55E),
-                        trackColor = Color(0xFF3B4252),
-                        modifier = androidx.compose.ui.Modifier.size(112.dp),
-                    )
-                    Text(
-                        text = if (percent >= 100) "✓" else "$percent%",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (percent >= 100) Color(0xFF22C55E) else Color(0xFFFFFFFF),
-                    )
-                }
-                Spacer(modifier = androidx.compose.ui.Modifier.height(14.dp))
-                Text(
-                    text = progress.phase,
-                    fontSize = 14.sp,
-                    color = Color(0xFFFFFFFF),
-                )
-            }
-        }
-    }
-}
