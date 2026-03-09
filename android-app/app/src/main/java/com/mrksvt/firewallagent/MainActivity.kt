@@ -1335,12 +1335,17 @@ class MainActivity : AppCompatActivity() {
                         .show()
                 } else {
                     runAction("Enable Firewall", 103) { loading ->
-                        loading.updateProgress("Enable Firewall", 30, 100, "Mengaktifkan layanan root firewall...")
+                        loading.updateProgress("Enable Firewall", 20, 100, "Mengaktifkan layanan root firewall...")
                         val enableResult = RootFirewallController.enable()
                         if (!enableResult.ok) return@runAction enableResult
                         
-                        loading.updateProgress("Enable Firewall", 65, 100, "Menyuntikkan iptables rules...")
-                        val applyResult = RootFirewallController.applyAppRules(buildManagedRules())
+                        val (applyResult, summary) = RootFirewallController.applyAppRulesWithProgress(buildManagedRules()) { processed, total ->
+                            val safeTotal = if (total <= 0) 1 else total
+                            val percent = (20f + (processed.toFloat() / safeTotal.toFloat()) * 70f).roundToInt().coerceIn(20, 90)
+                            runOnUiThread {
+                                loading.updateProgress("Enable Firewall", percent, 100, "Menyuntikkan rules ($processed/$total)...")
+                            }
+                        }
                         mergeExecResults(enableResult, applyResult)
                     }
                 }
