@@ -1,18 +1,30 @@
 package com.mrksvt.firewallagent
 
+import android.Manifest
+import android.content.ContentValues
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
+import android.provider.ContactsContract
 import android.view.Gravity
 import android.view.View
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.mrksvt.firewallagent.databinding.ActivitySecurityStatsBinding
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -28,7 +40,11 @@ import kotlin.math.pow
 
 class SecurityStatsActivity : AppCompatActivity() {
     private lateinit var binding: ActivitySecurityStatsBinding
+    private lateinit var loadingDialog: LoadingDialogController
     private var selectedPeriod = Period.P24H
+    private var selectedAdPackage: String? = null
+    private var latestStats: SecurityStats? = null
+    private val snapshotPref by lazy { getSharedPreferences("fa_security_stats_cache", MODE_PRIVATE) }
 
     private enum class Period { P24H, P7D }
 
@@ -36,20 +52,26 @@ class SecurityStatsActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivitySecurityStatsBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        loadingDialog = LoadingDialogController(this)
 
-        binding.refreshBtn.setOnClickListener { refreshStats() }
+        binding.refreshBtn.setOnClickListener { refreshStats(showSuccessDialog = true) }
         binding.period24Btn.setOnClickListener {
             selectedPeriod = Period.P24H
             updatePeriodButtons()
-            refreshStats()
+            refreshStats(showSuccessDialog = false)
         }
         binding.period7dBtn.setOnClickListener {
             selectedPeriod = Period.P7D
             updatePeriodButtons()
-            refreshStats()
+            refreshStats(showSuccessDialog = false)
+        }
+        binding.exportCallGuardCsvBtn.setOnClickListener { exportCallGuardLogsCsv() }
+        binding.exportCallGuardJsonBtn.setOnClickListener { exportCallGuardLogsJson() }
+        binding.networkLogTableBtn.setOnClickListener {
+            startActivity(Intent(this, NetworkLogTableActivity::class.java))
         }
         updatePeriodButtons()
-        refreshStats()
+        refreshStats(showSuccessDialog = true)
     }
 
     private fun updatePeriodButtons() {
@@ -64,15 +86,44 @@ class SecurityStatsActivity : AppCompatActivity() {
         binding.period7dBtn.setTextColor(if (!p24) onTx else offTx)
     }
 
-    private fun refreshStats() {
+    private fun refreshStats(showSuccessDialog: Boolean) {
         lifecycleScope.launch {
-            binding.malwareSummaryText.text = "Loading..."
-            binding.adSummaryText.text = "Loading..."
-            binding.callSummaryText.text = "Loading..."
+            if (showSuccessDialog) {
+                loadingDialog.showProgress(
+                    title = "Security Stats",
+                    processed = 8,
+                    total = 100,
+                    phase = "Memuat snapshot cache...",
+                )
+            }
+            val hasCached = renderCachedSnapshotIfAny()
+            if (!hasCached) {
+                binding.malwareSummaryText.text = "Loading..."
+                binding.adSummaryText.text = "Loading..."
+                binding.callSummaryText.text = "Loading..."
+            }
+            if (showSuccessDialog) {
+                loadingDialog.updateProgress(
+                    title = "Security Stats",
+                    processed = 34,
+                    total = 100,
+                    phase = "Membaca event log...",
+                )
+            }
 
             val stats = withContext(Dispatchers.IO) { collectStats() }
+            if (showSuccessDialog) {
+                loadingDialog.updateProgress(
+                    title = "Security Stats",
+                    processed = 72,
+                    total = 100,
+                    phase = "Menyusun ringkasan statistik...",
+                )
+            }
+            latestStats = stats
             binding.malwareSummaryText.text = buildMalwareText(stats)
             binding.adSummaryText.text = buildAdText(stats)
+            binding.adStatusTotalsText.text = buildAdStatusTotalsText(stats.adStatusTotals)
             binding.callSummaryText.text = buildCallText(stats)
             binding.malwareLogText.text = stats.malwareLogs.ifBlank { "-" }
             binding.callLogText.text = stats.callLogs.ifBlank { "-" }
@@ -80,6 +131,26 @@ class SecurityStatsActivity : AppCompatActivity() {
             renderTrend(stats)
             renderCallPie(stats)
             renderAdAppList(stats.adApps)
+            renderSelectedAdApp(stats)
+            saveSnapshotUi(
+                malware = binding.malwareSummaryText.text?.toString().orEmpty(),
+                ad = binding.adSummaryText.text?.toString().orEmpty(),
+                call = binding.callSummaryText.text?.toString().orEmpty(),
+                last = binding.lastUpdatedText.text?.toString().orEmpty(),
+            )
+            if (showSuccessDialog) {
+                loadingDialog.updateProgress(
+                    title = "Security Stats",
+                    processed = 100,
+                    total = 100,
+                    phase = "Finalisasi...",
+                )
+                loadingDialog.dismissProgress()
+                loadingDialog.showSuccess(
+                    title = "Security Stats Ready",
+                    message = "Data statistik berhasil dimuat.",
+                )
+            }
         }
     }
 
@@ -138,13 +209,22 @@ class SecurityStatsActivity : AppCompatActivity() {
         val container = binding.adAppListContainer
         container.removeAllViews()
         binding.adAppEmptyText.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
-        if (items.isEmpty()) return
+        if (items.isEmpty()) {
+            selectedAdPackage = null
+            return
+        }
+        if (selectedAdPackage.isNullOrBlank() || items.none { it.packageName == selectedAdPackage }) {
+            selectedAdPackage = items.firstOrNull()?.packageName
+        }
 
         items.take(20).forEach { item ->
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(2), dp(6), dp(2), dp(6))
+                setBackgroundColor(if (item.packageName == selectedAdPackage) Color.parseColor("#16213E") else Color.TRANSPARENT)
+                isClickable = true
+                isFocusable = true
             }
 
             val icon = ImageView(this).apply {
@@ -178,12 +258,19 @@ class SecurityStatsActivity : AppCompatActivity() {
             nameAndPkg.addView(pkgTv)
 
             val countTv = TextView(this).apply {
-                text = "${item.blockedCount} query"
+                text = "${item.totalCount} query"
                 setTextColor(Color.parseColor("#22C55E"))
                 textSize = 13f
                 setTypeface(typeface, Typeface.BOLD)
             }
 
+            row.setOnClickListener {
+                selectedAdPackage = item.packageName
+                latestStats?.let { stats ->
+                    renderAdAppList(stats.adApps)
+                    renderSelectedAdApp(stats)
+                }
+            }
             row.addView(icon)
             row.addView(nameAndPkg)
             row.addView(countTv)
@@ -191,9 +278,38 @@ class SecurityStatsActivity : AppCompatActivity() {
         }
     }
 
+    private fun renderSelectedAdApp(stats: SecurityStats) {
+        val item = stats.adApps.firstOrNull { it.packageName == selectedAdPackage }
+        if (item == null) {
+            binding.adAppDetailTitleText.text = "Pilih aplikasi untuk melihat sebaran status."
+            binding.adAppDetailSummaryText.text = "-"
+            binding.adAppPieChart.setData(emptyList(), "-")
+            return
+        }
+        binding.adAppDetailTitleText.text = "${item.appName} (${item.packageName})"
+        binding.adAppDetailSummaryText.text = buildString {
+            appendLine("Total event: ${item.totalCount}")
+            item.statusCounts.entries.sortedByDescending { it.value }.forEachIndexed { index, entry ->
+                val prefix = if (index == 0) "" else " | "
+                append(prefix)
+                append("${statusLabel(entry.key)}: ${entry.value}")
+            }
+        }.trim()
+        val statusOrder = linkedSetOf("blocked", "faked", "observe")
+        statusOrder.addAll(item.statusCounts.keys)
+        val slices = statusOrder.mapNotNull { key ->
+            val count = item.statusCounts[key] ?: 0
+            if (count <= 0) null else SecurityPieChartView.Slice(statusLabel(key), count.toFloat(), statusColor(key))
+        }
+        binding.adAppPieChart.setData(
+            items = slices,
+            center = item.totalCount.toString(),
+        )
+    }
+
     private fun collectStats(): SecurityStats {
-        val tail = RootFirewallController.runRaw("tail -n 1600 /data/local/tmp/firewall_agent/logs/controller.log 2>/dev/null")
-        val lines = tail.stdout.lines().filter { it.contains("[runner]") }
+        val (tailRaw, adsDrop, adEventsRaw, callStats) = runBlockingCollectInputs()
+        val lines = tailRaw.lines().filter { it.contains("[runner]") }
 
         var totalIncidents = 0
         var malwareLike = 0
@@ -245,48 +361,45 @@ class SecurityStatsActivity : AppCompatActivity() {
             }
         }
 
-        val adsDrop = RootFirewallController.runRaw(
-            "iptables -L FA_ADS -v -n 2>/dev/null | awk 'BEGIN{pk=0;by=0} /DROP/{pk+=$1;by+=$2} END{printf \"%d %d\", pk, by}'",
-        )
         val adParts = adsDrop.stdout.trim().split(Regex("\\s+"))
         val adPackets = adParts.getOrNull(0)?.toLongOrNull() ?: 0L
         val adBytes = adParts.getOrNull(1)?.toLongOrNull() ?: 0L
 
-        val adEvents = RootFirewallController.runRaw(
-            "grep -h 'FA.HybridAdHook' /data/adb/lspd/log/modules_*.log 2>/dev/null | tail -n 30000",
-        )
         val ads24h = IntArray(24)
         val ads7d = IntArray(7)
         var adQueryBlocked = 0
-        val adCounts = linkedMapOf<String, Int>()
-        adEvents.stdout.lines().forEach { line ->
-            val lower = line.lowercase()
-            val isBlockedEvent = lower.contains("fa.hybridadhook blocked ") || lower.contains("fa.hybridadhook intercepted request")
-            if (!isBlockedEvent) return@forEach
-            adQueryBlocked++
-            parseAdEventTime(line, now, ZoneId.systemDefault())?.let { ts ->
+        val adStatusTotals = linkedMapOf<String, Int>()
+        val allAdEvents = AdEventStore.mergeCurrentLog(applicationContext, adEventsRaw)
+        val adByPkg = linkedMapOf<String, MutableMap<String, Int>>()
+        val nowMs = System.currentTimeMillis()
+        val adPeriodMs = if (selectedPeriod == Period.P24H) 24L * 3600_000L else 7L * 24L * 3600_000L
+        allAdEvents.forEach { event ->
+            if (event.ts <= 0L || (nowMs - event.ts) > adPeriodMs) return@forEach
+            adStatusTotals[event.status] = (adStatusTotals[event.status] ?: 0) + 1
+            if (event.status == "blocked") {
+                adQueryBlocked++
+                val ts = Instant.ofEpochMilli(event.ts)
                 val h = ((now.epochSecond - ts.epochSecond) / 3600).toInt()
                 if (h in 0..23) ads24h[23 - h]++
                 val d = ((now.epochSecond - ts.epochSecond) / 86400).toInt()
                 if (d in 0..6) ads7d[6 - d]++
             }
-            val pkg = parseAdPackage(line)
-            if (!pkg.isNullOrBlank()) adCounts[pkg] = (adCounts[pkg] ?: 0) + 1
+            val perStatus = adByPkg.getOrPut(event.packageName) { linkedMapOf() }
+            perStatus[event.status] = (perStatus[event.status] ?: 0) + 1
         }
-        val adAppStats = adCounts.entries
-            .sortedByDescending { it.value }
-            .map { (pkg, count) ->
+        val adAppStats = adByPkg.entries
+            .map { (pkg, statusCounts) ->
                 AdAppStat(
                     packageName = pkg,
                     appName = runCatching {
                         val ai = packageManager.getApplicationInfo(pkg, 0)
                         packageManager.getApplicationLabel(ai).toString()
                     }.getOrDefault(pkg),
-                    blockedCount = count,
+                    totalCount = statusCounts.values.sum(),
+                    statusCounts = statusCounts.toMap(),
                 )
             }
-
-        val callStats = collectCallStats()
+            .sortedByDescending { it.totalCount }
 
         return SecurityStats(
             totalIncidents = totalIncidents,
@@ -297,6 +410,7 @@ class SecurityStatsActivity : AppCompatActivity() {
             virus = virus,
             ransomware = ransomware,
             adQueryBlocked = adQueryBlocked,
+            adStatusTotals = adStatusTotals.toMap(),
             adPacketsBlocked = adPackets,
             adBytesBlocked = adBytes,
             malware24h = malware24h.toList(),
@@ -309,17 +423,73 @@ class SecurityStatsActivity : AppCompatActivity() {
             callAccepted = callStats.accepted,
             malwareLogs = malwareLogLines.takeLast(12).joinToString("\n"),
             adApps = adAppStats,
-            callLogs = callStats.logs.takeLast(12).joinToString("\n"),
+            callLogs = buildCallLogTable(callStats.logs.takeLast(12)),
             rawDebug = buildString {
                 appendLine("runner_lines=${lines.size}")
                 appendLine("ads_drop_raw=${adsDrop.stdout.trim().ifBlank { "(empty)" }}")
-                appendLine("ad_hook_events=${adQueryBlocked}")
+                appendLine("ad_hook_events=${allAdEvents.size}")
                 appendLine("call_events_total=${callStats.total}")
-                if (tail.stderr.isNotBlank()) appendLine("tail_err=${tail.stderr.trim()}")
                 if (adsDrop.stderr.isNotBlank()) appendLine("ads_err=${adsDrop.stderr.trim()}")
-                if (adEvents.stderr.isNotBlank()) appendLine("ads_hook_err=${adEvents.stderr.trim()}")
             }.trim(),
         )
+    }
+
+    private fun runBlockingCollectInputs(): QuadInputs = kotlinx.coroutines.runBlocking {
+        coroutineScope {
+            val tailDef = async(Dispatchers.IO) {
+                LogSnapshotCache.getControllerRunnerTail(applicationContext, maxLines = 1600)
+            }
+            val adsDropDef = async(Dispatchers.IO) {
+                RootFirewallController.runRaw(
+                    "iptables -L FA_ADS -v -n 2>/dev/null | awk 'BEGIN{pk=0;by=0} /DROP/{pk+=$1;by+=$2} END{printf \"%d %d\", pk, by}'",
+                )
+            }
+            val adEventsDef = async(Dispatchers.IO) {
+                LogSnapshotCache.getHybridAdEvents(applicationContext, maxLines = 40000)
+            }
+            val callStatsDef = async(Dispatchers.IO) { collectCallStats() }
+
+            QuadInputs(
+                tailRaw = tailDef.await(),
+                adsDrop = adsDropDef.await(),
+                adEventsRaw = adEventsDef.await(),
+                callStats = callStatsDef.await(),
+            )
+        }
+    }
+
+    private data class QuadInputs(
+        val tailRaw: String,
+        val adsDrop: ExecResult,
+        val adEventsRaw: String,
+        val callStats: CallStats,
+    )
+
+    private fun renderCachedSnapshotIfAny(): Boolean {
+        val malware = snapshotPref.getString("malware", "").orEmpty()
+        val ad = snapshotPref.getString("ad", "").orEmpty()
+        val call = snapshotPref.getString("call", "").orEmpty()
+        val last = snapshotPref.getString("last", "").orEmpty()
+        if (malware.isBlank() && ad.isBlank() && call.isBlank()) return false
+        if (malware.isNotBlank()) binding.malwareSummaryText.text = malware
+        if (ad.isNotBlank()) binding.adSummaryText.text = ad
+        if (call.isNotBlank()) binding.callSummaryText.text = call
+        if (last.isNotBlank()) binding.lastUpdatedText.text = "$last (cached)"
+        return true
+    }
+
+    private fun saveSnapshotUi(
+        malware: String,
+        ad: String,
+        call: String,
+        last: String,
+    ) {
+        snapshotPref.edit()
+            .putString("malware", malware)
+            .putString("ad", ad)
+            .putString("call", call)
+            .putString("last", last)
+            .apply()
     }
 
     private fun parseIncidentTime(line: String): Instant? {
@@ -376,6 +546,15 @@ class SecurityStatsActivity : AppCompatActivity() {
         append("Mode: hybrid (LSPosed hook + firewall + ML scoring)")
     }
 
+    private fun buildAdStatusTotalsText(totals: Map<String, Int>): String {
+        if (totals.isEmpty()) return "-"
+        val ordered = linkedSetOf("blocked", "faked", "observe").apply { addAll(totals.keys) }
+        return ordered.mapNotNull { key ->
+            val value = totals[key] ?: 0
+            if (value <= 0) null else "${statusLabel(key)}: $value"
+        }.joinToString(" | ").ifBlank { "-" }
+    }
+
     private fun parseAdPackage(line: String): String? {
         val pkg = Regex("""\bin\s+([a-zA-Z0-9._]+)""").find(line)?.groupValues?.getOrNull(1)?.trim().orEmpty()
         if (pkg.isBlank()) return null
@@ -397,11 +576,13 @@ class SecurityStatsActivity : AppCompatActivity() {
         val arr = runCatching { JSONArray(raw) }.getOrElse { JSONArray() }
         val nowMs = System.currentTimeMillis()
         val periodMs = if (selectedPeriod == Period.P24H) 24L * 3600_000L else 7L * 24L * 3600_000L
+        val canReadContacts = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
+        val nameCache = linkedMapOf<String, String>()
         var total = 0
         var blockedAuto = 0
         var manualReject = 0
         var accepted = 0
-        val logs = mutableListOf<String>()
+        val logs = mutableListOf<CallLogRow>()
 
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
@@ -410,13 +591,22 @@ class SecurityStatsActivity : AppCompatActivity() {
             val blocked = o.optBoolean("blocked", false)
             val reason = o.optString("reason", "unknown")
             val number = o.optString("number", "unknown").ifBlank { "unknown" }
+            val normalizedNumber = normalizePhone(number)
+            val displayNumber = normalizedNumber.ifBlank { "unknown" }
+            val name = resolveCallerName(displayNumber, canReadContacts, nameCache)
             total++
             when {
                 !blocked -> accepted++
                 reason == "blacklist" -> manualReject++
                 else -> blockedAuto++
             }
-            logs += "${fmtTs(Instant.ofEpochMilli(ts))} | $number | ${if (blocked) "blocked" else "accepted"} | $reason"
+            logs += CallLogRow(
+                date = fmtTs(Instant.ofEpochMilli(ts)),
+                name = name,
+                number = displayNumber,
+                status = if (blocked) "blocked" else "accepted",
+                policy = reason,
+            )
         }
 
         if (logs.isEmpty()) {
@@ -426,7 +616,17 @@ class SecurityStatsActivity : AppCompatActivity() {
                     val o = runCatching { JSONObject(ln) }.getOrNull() ?: return@forEach
                     val ts = o.optLong("ts", 0L)
                     if (ts > 0L) {
-                        logs += "${fmtTs(Instant.ofEpochMilli(ts))} | ${o.optString("number", "unknown")} | blocked | ${o.optString("reason", "unknown")}"
+                        val number = o.optString("number", "unknown").ifBlank { "unknown" }
+                        val normalizedNumber = normalizePhone(number)
+                        val displayNumber = normalizedNumber.ifBlank { "unknown" }
+                        val name = resolveCallerName(displayNumber, canReadContacts, nameCache)
+                        logs += CallLogRow(
+                            date = fmtTs(Instant.ofEpochMilli(ts)),
+                            name = name,
+                            number = displayNumber,
+                            status = "blocked",
+                            policy = o.optString("reason", "unknown"),
+                        )
                     }
                 }
             }
@@ -439,6 +639,206 @@ class SecurityStatsActivity : AppCompatActivity() {
             accepted = accepted,
             logs = logs,
         )
+    }
+
+    private fun resolveCallerName(number: String, canReadContacts: Boolean, cache: MutableMap<String, String>): String {
+        val key = number.ifBlank { "unknown" }
+        cache[key]?.let { return it }
+        val fallback = spamAliasFromNumber(number)
+        if (!canReadContacts || key == "unknown") {
+            cache[key] = fallback
+            return fallback
+        }
+        val name = runCatching {
+            val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(number))
+            contentResolver.query(
+                uri,
+                arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME),
+                null,
+                null,
+                null,
+            )?.use { c ->
+                if (!c.moveToFirst()) return@use null
+                val idx = c.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
+                if (idx >= 0) c.getString(idx) else null
+            }
+        }.getOrNull()
+        val resolved = name?.takeIf { it.isNotBlank() } ?: fallback
+        cache[key] = resolved
+        return resolved
+    }
+
+    private fun spamAliasFromNumber(number: String): String {
+        val digits = normalizePhone(number)
+        val suffix = when {
+            digits.length >= 4 -> digits.takeLast(4)
+            digits.isBlank() -> "0000"
+            else -> digits.padStart(4, '0')
+        }
+        return "spam$suffix"
+    }
+
+    private fun normalizePhone(raw: String): String = raw.filter { it.isDigit() }
+
+    private fun buildCallLogTable(rows: List<CallLogRow>): String {
+        if (rows.isEmpty()) return "-"
+        val header = listOf("No", "Date", "Nama", "Nomor", "Status", "Policy")
+        val indexed = rows.mapIndexed { idx, r ->
+            listOf(
+                (idx + 1).toString(),
+                r.date,
+                r.name,
+                r.number,
+                r.status,
+                r.policy,
+            )
+        }
+        val allRows = listOf(header) + indexed
+        val widths = IntArray(header.size) { col -> allRows.maxOf { fitCallCol(it[col], col).length } }
+
+        fun formatRow(cols: List<String>): String =
+            cols.mapIndexed { i, v -> fitCallCol(v, i).padEnd(widths[i], ' ') }.joinToString(" | ")
+
+        val separator = widths.joinToString("-+-") { "-".repeat(it) }
+        return buildString {
+            appendLine(formatRow(header))
+            appendLine(separator)
+            indexed.forEach { appendLine(formatRow(it)) }
+        }.trimEnd()
+    }
+
+    private fun fitCallCol(value: String, col: Int): String {
+        val max = when (col) {
+            0 -> 4
+            1 -> 14
+            2 -> 20
+            3 -> 16
+            4 -> 8
+            else -> 16
+        }
+        return if (value.length <= max) value else value.take(max - 3) + "..."
+    }
+
+    private fun exportCallGuardLogsCsv() {
+        lifecycleScope.launch {
+            val rows = withContext(Dispatchers.IO) { collectCallStats().logs }
+            if (rows.isEmpty()) {
+                Toast.makeText(this@SecurityStatsActivity, "Tidak ada Call Guard log.", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val out = withContext(Dispatchers.IO) {
+                val ts = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
+                    .format(Instant.now().atZone(ZoneId.systemDefault()))
+                val fileName = "security_stats_call_guard_$ts.csv"
+                val csv = buildString {
+                    appendLine("no,date,nama,nomor,status,policy")
+                    rows.forEachIndexed { idx, r ->
+                        appendLine(
+                            listOf(
+                                (idx + 1).toString(),
+                                r.date,
+                                r.name,
+                                r.number,
+                                r.status,
+                                r.policy,
+                            ).joinToString(",") { escapeCsv(it) },
+                        )
+                    }
+                }
+                saveExportToDocuments(
+                    fileName = fileName,
+                    mimeType = "text/csv",
+                    content = csv,
+                )
+            }
+            if (out != null) {
+                Toast.makeText(
+                    this@SecurityStatsActivity,
+                    "CSV disimpan: ${out.displayPath}",
+                    Toast.LENGTH_LONG,
+                ).show()
+            } else {
+                Toast.makeText(this@SecurityStatsActivity, "Export CSV gagal", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun exportCallGuardLogsJson() {
+        lifecycleScope.launch {
+            val rows = withContext(Dispatchers.IO) { collectCallStats().logs }
+            if (rows.isEmpty()) {
+                Toast.makeText(this@SecurityStatsActivity, "Tidak ada Call Guard log.", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val out = withContext(Dispatchers.IO) {
+                val ts = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
+                    .format(Instant.now().atZone(ZoneId.systemDefault()))
+                val fileName = "security_stats_call_guard_$ts.json"
+                val arr = JSONArray()
+                rows.forEachIndexed { idx, r ->
+                    arr.put(
+                        JSONObject()
+                            .put("no", idx + 1)
+                            .put("date", r.date)
+                            .put("nama", r.name)
+                            .put("nomor", r.number)
+                            .put("status", r.status)
+                            .put("policy", r.policy),
+                    )
+                }
+                saveExportToDocuments(
+                    fileName = fileName,
+                    mimeType = "application/json",
+                    content = arr.toString(2),
+                )
+            }
+            if (out != null) {
+                Toast.makeText(
+                    this@SecurityStatsActivity,
+                    "JSON disimpan: ${out.displayPath}",
+                    Toast.LENGTH_LONG,
+                ).show()
+            } else {
+                Toast.makeText(this@SecurityStatsActivity, "Export JSON gagal", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun saveExportToDocuments(fileName: String, mimeType: String, content: String): ExportResult? {
+        return runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOCUMENTS}/FirewallAgent")
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+                val uri = contentResolver.insert(MediaStore.Files.getContentUri("external"), values) ?: return@runCatching null
+                contentResolver.openOutputStream(uri)?.use { it.write(content.toByteArray()) }
+                values.clear()
+                values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                contentResolver.update(uri, values, null, null)
+                ExportResult(
+                    uri = uri,
+                    displayPath = "Documents/FirewallAgent/$fileName",
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "FirewallAgent")
+                if (!dir.exists()) dir.mkdirs()
+                val file = File(dir, fileName)
+                file.writeText(content)
+                ExportResult(
+                    uri = Uri.fromFile(file),
+                    displayPath = file.absolutePath,
+                )
+            }
+        }.getOrNull()
+    }
+
+    private fun escapeCsv(value: String): String {
+        val escaped = value.replace("\"", "\"\"")
+        return "\"$escaped\""
     }
 
     private fun fmtTs(ts: Instant): String {
@@ -459,6 +859,20 @@ class SecurityStatsActivity : AppCompatActivity() {
         return fmt.format(Instant.now().atZone(ZoneId.systemDefault()))
     }
 
+    private fun statusLabel(status: String): String = when (status.lowercase()) {
+        "blocked" -> "Blocked"
+        "faked" -> "Faked"
+        "observe" -> "Observe"
+        else -> status.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+    }
+
+    private fun statusColor(status: String): String = when (status.lowercase()) {
+        "blocked" -> "#EF4444"
+        "faked" -> "#F59E0B"
+        "observe" -> "#06B6D4"
+        else -> "#22C55E"
+    }
+
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 }
 
@@ -467,13 +881,27 @@ private data class CallStats(
     val blockedAuto: Int,
     val manualReject: Int,
     val accepted: Int,
-    val logs: List<String>,
+    val logs: List<CallLogRow>,
+)
+
+private data class CallLogRow(
+    val date: String,
+    val name: String,
+    val number: String,
+    val status: String,
+    val policy: String,
+)
+
+private data class ExportResult(
+    val uri: Uri,
+    val displayPath: String,
 )
 
 data class AdAppStat(
     val packageName: String,
     val appName: String,
-    val blockedCount: Int,
+    val totalCount: Int,
+    val statusCounts: Map<String, Int>,
 )
 
 data class SecurityStats(
@@ -485,6 +913,7 @@ data class SecurityStats(
     val virus: Int,
     val ransomware: Int,
     val adQueryBlocked: Int,
+    val adStatusTotals: Map<String, Int>,
     val adPacketsBlocked: Long,
     val adBytesBlocked: Long,
     val malware24h: List<Int>,

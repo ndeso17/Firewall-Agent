@@ -12,6 +12,7 @@
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
@@ -46,6 +47,12 @@
             android:exported="false"
             android:directBootAware="true"
             android:process=":backend"
+            android:foregroundServiceType="dataSync" />
+        <service
+            android:name=".GlobalRuleSyncService"
+            android:enabled="true"
+            android:exported="false"
+            android:directBootAware="true"
             android:foregroundServiceType="dataSync" />
         <activity
             android:name=".EvilTwinActivity"
@@ -132,7 +139,13 @@
             android:name=".AdGuardActivity"
             android:exported="false" />
         <activity
+            android:name=".AdsMatcherActivity"
+            android:exported="false" />
+        <activity
             android:name=".SecurityStatsActivity"
+            android:exported="false" />
+        <activity
+            android:name=".NetworkLogTableActivity"
             android:exported="false" />
         <activity
             android:name=".CallGuardActivity"
@@ -170,6 +183,9 @@
             android:name=".TrafficMonitorActivity"
             android:exported="false" />
         <activity
+            android:name=".RamOptimizerActivity"
+            android:exported="false" />
+        <activity
             android:name=".TrafficFlowLogActivity"
             android:exported="false" />
         <activity
@@ -182,11 +198,9 @@
             android:name=".AlertsActivity"
             android:exported="false" />
         <activity
-            android:name=".LogActivity"
-            android:exported="false" />
-        <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:screenOrientation="portrait">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

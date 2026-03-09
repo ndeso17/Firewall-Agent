@@ -1,6 +1,7 @@
 package com.mrksvt.firewallagent
 
 import android.app.AlarmManager
+import android.app.ActivityManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.BroadcastReceiver
@@ -11,6 +12,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
@@ -24,6 +26,7 @@ import org.json.JSONException
 import java.net.InetSocketAddress
 import java.net.Socket
 import kotlin.system.measureNanoTime
+import kotlin.math.absoluteValue
 
 class FirewallKeepAliveService : Service() {
     companion object {
@@ -41,6 +44,20 @@ class FirewallKeepAliveService : Service() {
     private var shutdownReceiver: BroadcastReceiver? = null
     @Volatile private var shuttingDown: Boolean = false
     @Volatile private var stopRequested: Boolean = false
+    @Volatile private var lastBgAnomalyScanAt: Long = 0L
+    @Volatile private var lastStatusNotifSignature: String = ""
+    @Volatile private var lastStatusNotifAtMs: Long = 0L
+    private val notifStatePrefsName = "fa_notif_state"
+    private val notifStatusSigKey = "status_sig"
+    private val notifStatusAtKey = "status_at_ms"
+    private val notifEventAtPrefix = "event_at_"
+    private val bgAnomalyScanIntervalMs: Long = 120_000L
+    private val statusNotifMinUpdateIntervalMs: Long = 60_000L
+    private val statusNotifChangeMinMs: Long = 8_000L
+    private val handoverNotifMinIntervalMs: Long = 120_000L
+    private val bgAnomalyDedupWindowMs: Long = 15 * 60_000L
+    private val bgAnomalyPrefsName = "fa_bg_anomaly"
+    private val bgAnomalyLastJsonKey = "last_event_json"
     private val autoDnsHosts = listOf(
         "base.dns.mullvad.net",
         "family.dns.mullvad.net",
@@ -92,6 +109,7 @@ class FirewallKeepAliveService : Service() {
             ),
         )
         lastNetworkSignature = currentNetworkSignature()
+        ensureGlobalStrictService()
         registerNetworkCallback()
         registerPackageAddedReceiver()
         registerShutdownReceiver()
@@ -103,8 +121,22 @@ class FirewallKeepAliveService : Service() {
                 runCatching { syncStatusNotification() }
                 runCatching { AppInventoryStore.refreshSnapshot(applicationContext) }
                 runCatching { AppMetaCacheStore.refreshSnapshot(applicationContext) }
+                runCatching { scanBackgroundResourceAnomaliesIfNeeded() }
                 delay(60_000)
             }
+        }
+    }
+
+    private fun ensureGlobalStrictService() {
+        val pref = getSharedPreferences("global_strict_state", MODE_PRIVATE)
+        if (!pref.getBoolean("enabled", false)) return
+        val strictIntent = Intent(this, GlobalRuleSyncService::class.java).apply {
+            action = GlobalRuleSyncService.ACTION_START_GLOBAL_STRICT
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(strictIntent)
+        } else {
+            startService(strictIntent)
         }
     }
 
@@ -117,7 +149,6 @@ class FirewallKeepAliveService : Service() {
         }
         scope.launch {
             runCatching { cleanupOrphanManagedUids() }
-            runCatching { syncStatusNotification() }
             runCatching { handleNetworkTransition("service_start") }
         }
         return START_STICKY
@@ -237,8 +268,6 @@ class FirewallKeepAliveService : Service() {
             .put("vpn", false)
             .put("bluetooth_tethering", false)
             .put("tor", false)
-            .put("download", false)
-            .put("upload", false)
             .toString()
 
         profiles.forEach { p ->
@@ -266,8 +295,6 @@ class FirewallKeepAliveService : Service() {
             vpn = false,
             bluetooth = false,
             tor = false,
-            download = false,
-            upload = false,
         )
         RootFirewallController.applyAppRulesIncremental(
             upsertRules = listOf(denyRule),
@@ -307,17 +334,32 @@ class FirewallKeepAliveService : Service() {
             val applyCode = if (lockDesired) applyDnsLockRulesForCurrentNetwork().code else 0
             RootFirewallController.runRaw("settings put global private_dns_mode hostname; settings put global private_dns_specifier $savedHost")
             Log.i(tag, "step6 rewrite_rules_for_saved_dns exit=$applyCode lock=${if (lockDesired) "on" else "off"}")
-            NotifyHelper.post(this, "Firewall Agent", "Handover OK: DNS $savedHost aktif.", 1204)
+            postEventDedup(
+                id = 1204,
+                title = "Firewall Agent",
+                message = "Handover OK: DNS $savedHost aktif.",
+                minIntervalMs = handoverNotifMinIntervalMs,
+            )
             return
         }
 
         if (lockDesired) {
             val apply = applyDnsLockRulesForCurrentNetwork()
             Log.w(tag, "step7 keep_user_dns_and_reapply_lock exit=${apply.code}")
-            NotifyHelper.post(this, "Firewall Agent", "Handover: DNS/Lock user dipertahankan.", 1205)
+            postEventDedup(
+                id = 1205,
+                title = "Firewall Agent",
+                message = "Handover: DNS/Lock user dipertahankan.",
+                minIntervalMs = handoverNotifMinIntervalMs,
+            )
         } else {
             Log.w(tag, "step7 lock_not_desired keep_current_dns")
-            NotifyHelper.post(this, "Firewall Agent", "Handover: DNS user dipertahankan.", 1205)
+            postEventDedup(
+                id = 1205,
+                title = "Firewall Agent",
+                message = "Handover: DNS user dipertahankan.",
+                minIntervalMs = handoverNotifMinIntervalMs,
+            )
         }
     }
 
@@ -568,6 +610,18 @@ class FirewallKeepAliveService : Service() {
             }
         }
 
+        val signature = "$enabled|$mode|$service|$ml"
+        val now = System.currentTimeMillis()
+        val persisted = getSharedPreferences(notifStatePrefsName, MODE_PRIVATE)
+        val prevSigPersisted = persisted.getString(notifStatusSigKey, "").orEmpty()
+        val prevAtPersisted = persisted.getLong(notifStatusAtKey, 0L)
+        val prevSig = if (lastStatusNotifSignature.isNotBlank()) lastStatusNotifSignature else prevSigPersisted
+        val prevAt = maxOf(lastStatusNotifAtMs, prevAtPersisted)
+        val unchanged = signature == prevSig
+        val minInterval = if (unchanged) statusNotifMinUpdateIntervalMs else statusNotifChangeMinMs
+        val shouldSkip = (now - prevAt) < minInterval
+        if (shouldSkip) return
+
         val notif = NotifyHelper.buildPersistentStatusNotification(
             context = this,
             enabled = enabled,
@@ -576,6 +630,96 @@ class FirewallKeepAliveService : Service() {
             ml = ml,
         )
         startForeground(9001, notif)
+        lastStatusNotifSignature = signature
+        lastStatusNotifAtMs = now
+        persisted.edit()
+            .putString(notifStatusSigKey, signature)
+            .putLong(notifStatusAtKey, now)
+            .apply()
+    }
+
+    private fun postEventDedup(id: Int, title: String, message: String, minIntervalMs: Long) {
+        val now = System.currentTimeMillis()
+        val pref = getSharedPreferences(notifStatePrefsName, MODE_PRIVATE)
+        val key = notifEventAtPrefix + id
+        val lastAt = pref.getLong(key, 0L)
+        if ((now - lastAt) < minIntervalMs) return
+        NotifyHelper.post(this, title, message, id)
+        pref.edit().putLong(key, now).apply()
+    }
+
+    private fun scanBackgroundResourceAnomaliesIfNeeded() {
+        val now = System.currentTimeMillis()
+        if (now - lastBgAnomalyScanAt < bgAnomalyScanIntervalMs) return
+        lastBgAnomalyScanAt = now
+
+        val am = getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return
+        val running = am.runningAppProcesses.orEmpty()
+        if (running.isEmpty()) return
+        val candidates = running
+            .asSequence()
+            .filter { proc -> proc.importance > ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND_SERVICE }
+            .flatMap { proc -> proc.pkgList.orEmpty().asSequence() }
+            .filter { pkg -> pkg.isNotBlank() && pkg != packageName }
+            .distinct()
+            .take(25)
+            .toList()
+        if (candidates.isEmpty()) return
+
+        candidates.forEach { pkg ->
+            val cmd = buildString {
+                append("cmd appops get --user 0 $pkg 2>/dev/null | ")
+                append("grep -E 'ACCESS_FINE_LOCATION|ACCESS_COARSE_LOCATION|READ_EXTERNAL_STORAGE|READ_MEDIA_IMAGES|READ_MEDIA_VIDEO|READ_MEDIA_AUDIO|MANAGE_EXTERNAL_STORAGE' | tail -n 12")
+            }
+            val res = RootFirewallController.runRaw(cmd)
+            val out = res.stdout.trim()
+            if (out.isBlank()) return@forEach
+
+            val lower = out.lowercase()
+            val hasAllowed = lower.contains("allow")
+            val hasRecentSignal = lower.contains("time=") || lower.contains("running")
+            val hasLocation = lower.contains("access_fine_location") || lower.contains("access_coarse_location")
+            val hasFiles =
+                lower.contains("read_external_storage") ||
+                    lower.contains("read_media_images") ||
+                    lower.contains("read_media_video") ||
+                    lower.contains("read_media_audio") ||
+                    lower.contains("manage_external_storage")
+            if (!hasAllowed || !hasRecentSignal || (!hasLocation && !hasFiles)) return@forEach
+
+            val type = when {
+                hasLocation && hasFiles -> "location+files"
+                hasLocation -> "location"
+                else -> "files"
+            }
+            if (isBgAnomalySuppressed(pkg, type, now)) return@forEach
+            recordBgAnomaly(pkg, type, now)
+
+            val msg = "Anomali background: $pkg mengakses resource sensitif ($type)."
+            AppConfigStore.appendRuleAction(
+                applicationContext,
+                "[${java.time.Instant.ofEpochMilli(now)}] sec-bg-anomaly pkg=$pkg type=$type source=appops",
+            )
+            NotifyHelper.post(applicationContext, "Security Anomaly", msg, 6100 + (pkg.hashCode().absoluteValue % 1000))
+            Log.w(tag, "bg_anomaly_detected pkg=$pkg type=$type")
+        }
+    }
+
+    private fun isBgAnomalySuppressed(pkg: String, type: String, nowMs: Long): Boolean {
+        val pref = getSharedPreferences(bgAnomalyPrefsName, MODE_PRIVATE)
+        val raw = pref.getString(bgAnomalyLastJsonKey, "{}").orEmpty()
+        val obj = runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
+        val key = "$pkg|$type"
+        val lastTs = obj.optLong(key, 0L)
+        return (nowMs - lastTs) < bgAnomalyDedupWindowMs
+    }
+
+    private fun recordBgAnomaly(pkg: String, type: String, nowMs: Long) {
+        val pref = getSharedPreferences(bgAnomalyPrefsName, MODE_PRIVATE)
+        val raw = pref.getString(bgAnomalyLastJsonKey, "{}").orEmpty()
+        val obj = runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
+        obj.put("$pkg|$type", nowMs)
+        pref.edit().putString(bgAnomalyLastJsonKey, obj.toString()).apply()
     }
 
     override fun onDestroy() {

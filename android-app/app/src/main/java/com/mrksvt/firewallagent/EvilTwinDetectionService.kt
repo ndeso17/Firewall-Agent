@@ -32,7 +32,7 @@ class EvilTwinDetectionService : Service() {
     private var isMonitoring = false
     private val threatHistory = ConcurrentHashMap<String, Int>() // BSSID -> threat count
     
-    private val evilTwinReceiver = EvilTwinReceiver()
+    private val evilTwinReceiver = EvilTwinReceiver(this)
     
     companion object {
         private const val TAG = "EvilTwinService"

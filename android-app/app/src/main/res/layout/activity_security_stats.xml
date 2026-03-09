@@ -59,6 +59,14 @@
                 android:textAllCaps="false" />
         </LinearLayout>
 
+        <Button
+            android:id="@+id/networkLogTableBtn"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Open Network Log Table"
+            android:textAllCaps="false" />
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -171,6 +179,15 @@
                 android:textSize="15sp" />
 
             <TextView
+                android:id="@+id/adStatusTotalsText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="-"
+                android:textColor="#9CA3AF"
+                android:textSize="12sp" />
+
+            <TextView
                 android:id="@+id/adAppEmptyText"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -185,6 +202,32 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
                 android:orientation="vertical" />
+
+            <TextView
+                android:id="@+id/adAppDetailTitleText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="Pilih aplikasi untuk melihat sebaran status."
+                android:textColor="#E5E7EB"
+                android:textStyle="bold"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/adAppDetailSummaryText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="-"
+                android:textColor="#9CA3AF"
+                android:textSize="12sp" />
+
+            <com.mrksvt.firewallagent.SecurityPieChartView
+                android:id="@+id/adAppPieChart"
+                android:layout_width="match_parent"
+                android:layout_height="190dp"
+                android:layout_marginTop="8dp"
+                android:background="#0F172A" />
         </LinearLayout>
 
         <LinearLayout
@@ -236,17 +279,52 @@
                 android:textColor="#D1D5DB"
                 android:textSize="15sp" />
 
-            <TextView
-                android:id="@+id/callLogText"
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
-                android:background="#0A0A0A"
-                android:padding="10dp"
-                android:text="-"
-                android:textColor="#9CA3AF"
-                android:textSize="12sp"
-                android:typeface="monospace" />
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/exportCallGuardCsvBtn"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Export CSV"
+                    android:textAllCaps="false" />
+
+                <Space
+                    android:layout_width="8dp"
+                    android:layout_height="1dp" />
+
+                <Button
+                    android:id="@+id/exportCallGuardJsonBtn"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Export JSON"
+                    android:textAllCaps="false" />
+            </LinearLayout>
+
+            <HorizontalScrollView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:fillViewport="true"
+                android:scrollbars="horizontal">
+
+                <TextView
+                    android:id="@+id/callLogText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="#0A0A0A"
+                    android:padding="10dp"
+                    android:scrollHorizontally="true"
+                    android:text="-"
+                    android:textColor="#9CA3AF"
+                    android:textSize="12sp"
+                    android:typeface="monospace" />
+            </HorizontalScrollView>
         </LinearLayout>
 
     </LinearLayout>

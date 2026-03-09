@@ -21,8 +21,6 @@ data class AppNetRule(
     val vpn: Boolean,
     val bluetooth: Boolean,
     val tor: Boolean,
-    val download: Boolean,
-    val upload: Boolean,
 )
 
 data class ApplyRulesSummary(
@@ -138,26 +136,13 @@ object RootFirewallController {
         var appliedUids = 0
         normalized.forEach { r ->
             // If all paths are allowed, no restriction needed for this UID.
-            val allAllowed = r.local && r.wifi && r.cellular && r.vpn && r.bluetooth && r.tor && (r.roaming || r.cellular) && r.download && r.upload
+            val allAllowed = r.local && r.wifi && r.cellular && r.vpn && r.bluetooth && r.tor && (r.roaming || r.cellular)
             if (allAllowed) return@forEach
 
             val chain = "FAU_${r.uid}"
             cmd.append("iptables -N $chain >/dev/null 2>&1 || true;")
             cmd.append("iptables -F $chain >/dev/null 2>&1 || true;")
             cmd.append("iptables -A FA_APP -m owner --uid-owner ${r.uid} -j $chain >/dev/null 2>&1;")
-
-            // Directional control. Upload=false blocks app outbound packets.
-            if (!r.upload) {
-                cmd.append("iptables -A $chain -j REJECT --reject-with icmp-port-unreachable >/dev/null 2>&1;")
-                appliedUids++
-                return@forEach
-            }
-
-            // Download=false: mark conntrack for this UID then drop inbound packets by connmark.
-            if (!r.download) {
-                cmd.append("iptables -A $chain -j CONNMARK --set-mark ${r.uid} >/dev/null 2>&1;")
-                cmd.append("iptables -A FA_APP_IN -m connmark --mark ${r.uid} -j REJECT --reject-with icmp-port-unreachable >/dev/null 2>&1;")
-            }
 
             if (r.local) {
                 cmd.append("iptables -A $chain -o lo -j RETURN >/dev/null 2>&1;")
@@ -231,7 +216,7 @@ object RootFirewallController {
         }
 
         normalized.forEach { r ->
-            val allAllowed = r.local && r.wifi && r.cellular && r.vpn && r.bluetooth && r.tor && (r.roaming || r.cellular) && r.download && r.upload
+            val allAllowed = r.local && r.wifi && r.cellular && r.vpn && r.bluetooth && r.tor && (r.roaming || r.cellular)
             if (!allAllowed) {
                 restricted++
                 val chain = "FAU_${r.uid}"
@@ -239,14 +224,6 @@ object RootFirewallController {
                     append("iptables -N $chain >/dev/null 2>&1 || true;")
                     append("iptables -F $chain >/dev/null 2>&1 || true;")
                     append("iptables -A FA_APP -m owner --uid-owner ${r.uid} -j $chain >/dev/null 2>&1;")
-
-                    if (!r.upload) {
-                        append("iptables -A $chain -j REJECT --reject-with icmp-port-unreachable >/dev/null 2>&1;")
-                    } else {
-                        if (!r.download) {
-                            append("iptables -A $chain -j CONNMARK --set-mark ${r.uid} >/dev/null 2>&1;")
-                            append("iptables -A FA_APP_IN -m connmark --mark ${r.uid} -j REJECT --reject-with icmp-port-unreachable >/dev/null 2>&1;")
-                        }
                     if (r.local) {
                         append("iptables -A $chain -o lo -j RETURN >/dev/null 2>&1;")
                         append("iptables -A $chain -d 127.0.0.0/8 -j RETURN >/dev/null 2>&1;")
@@ -273,7 +250,6 @@ object RootFirewallController {
                         append("iptables -A $chain -d 127.0.0.1/32 -p tcp -m tcp --dport 9050 -j RETURN >/dev/null 2>&1;")
                     }
                     append("iptables -A $chain -j REJECT --reject-with icmp-port-unreachable >/dev/null 2>&1;")
-                    }
                 }
                 val res = runRoot(cmd)
                 if (!res.ok) {
@@ -393,15 +369,6 @@ object RootFirewallController {
         val chain = "FAU_${rule.uid}"
         val lines = mutableListOf<String>()
 
-        if (!rule.upload) {
-            lines += "-A $chain -j REJECT --reject-with icmp-port-unreachable"
-            return lines.joinToString("\n")
-        }
-
-        if (!rule.download) {
-            lines += "-A $chain -j CONNMARK --set-mark ${rule.uid}"
-        }
-
         if (rule.local) {
             lines += "-A $chain -o lo -j RETURN"
             lines += "-A $chain -d 127.0.0.0/8 -j RETURN"
@@ -484,40 +451,32 @@ object RootFirewallController {
                 append("iptables -N $chain >/dev/null 2>&1 || true;")
                 append("iptables -F $chain >/dev/null 2>&1 || true;")
 
-                if (!r.upload) {
-                    append("iptables -A $chain -j REJECT --reject-with icmp-port-unreachable >/dev/null 2>&1;")
-                } else {
-                    if (!r.download) {
-                        append("iptables -A $chain -j CONNMARK --set-mark ${r.uid} >/dev/null 2>&1;")
-                        append("iptables -A FA_APP_IN -m connmark --mark ${r.uid} -j REJECT --reject-with icmp-port-unreachable >/dev/null 2>&1;")
-                    }
-                    if (r.local) {
-                        append("iptables -A $chain -o lo -j RETURN >/dev/null 2>&1;")
-                        append("iptables -A $chain -d 127.0.0.0/8 -j RETURN >/dev/null 2>&1;")
-                    }
-                    if (r.wifi) {
-                        append("iptables -A $chain -o wlan+ -j RETURN >/dev/null 2>&1;")
-                    }
-                    if (r.cellular || r.roaming) {
-                        append("iptables -A $chain -o rmnet+ -j RETURN >/dev/null 2>&1;")
-                        append("iptables -A $chain -o ccmni+ -j RETURN >/dev/null 2>&1;")
-                        append("iptables -A $chain -o pdp+ -j RETURN >/dev/null 2>&1;")
-                        append("iptables -A $chain -o clat+ -j RETURN >/dev/null 2>&1;")
-                    }
-                    if (r.vpn) {
-                        append("iptables -A $chain -o tun+ -j RETURN >/dev/null 2>&1;")
-                        append("iptables -A $chain -o ppp+ -j RETURN >/dev/null 2>&1;")
-                        append("iptables -A $chain -o wg+ -j RETURN >/dev/null 2>&1;")
-                    }
-                    if (r.bluetooth) {
-                        append("iptables -A $chain -o bnep+ -j RETURN >/dev/null 2>&1;")
-                    }
-                    if (r.tor) {
-                        append("iptables -A $chain -d 127.0.0.1/32 -p tcp -m tcp --dport 9040 -j RETURN >/dev/null 2>&1;")
-                        append("iptables -A $chain -d 127.0.0.1/32 -p tcp -m tcp --dport 9050 -j RETURN >/dev/null 2>&1;")
-                    }
-                    append("iptables -A $chain -j REJECT --reject-with icmp-port-unreachable >/dev/null 2>&1;")
+                if (r.local) {
+                    append("iptables -A $chain -o lo -j RETURN >/dev/null 2>&1;")
+                    append("iptables -A $chain -d 127.0.0.0/8 -j RETURN >/dev/null 2>&1;")
                 }
+                if (r.wifi) {
+                    append("iptables -A $chain -o wlan+ -j RETURN >/dev/null 2>&1;")
+                }
+                if (r.cellular || r.roaming) {
+                    append("iptables -A $chain -o rmnet+ -j RETURN >/dev/null 2>&1;")
+                    append("iptables -A $chain -o ccmni+ -j RETURN >/dev/null 2>&1;")
+                    append("iptables -A $chain -o pdp+ -j RETURN >/dev/null 2>&1;")
+                    append("iptables -A $chain -o clat+ -j RETURN >/dev/null 2>&1;")
+                }
+                if (r.vpn) {
+                    append("iptables -A $chain -o tun+ -j RETURN >/dev/null 2>&1;")
+                    append("iptables -A $chain -o ppp+ -j RETURN >/dev/null 2>&1;")
+                    append("iptables -A $chain -o wg+ -j RETURN >/dev/null 2>&1;")
+                }
+                if (r.bluetooth) {
+                    append("iptables -A $chain -o bnep+ -j RETURN >/dev/null 2>&1;")
+                }
+                if (r.tor) {
+                    append("iptables -A $chain -d 127.0.0.1/32 -p tcp -m tcp --dport 9040 -j RETURN >/dev/null 2>&1;")
+                    append("iptables -A $chain -d 127.0.0.1/32 -p tcp -m tcp --dport 9050 -j RETURN >/dev/null 2>&1;")
+                }
+                append("iptables -A $chain -j REJECT --reject-with icmp-port-unreachable >/dev/null 2>&1;")
                 append("iptables -A FA_APP -m owner --uid-owner ${r.uid} -j $chain >/dev/null 2>&1;")
             }
             val res = runRoot(cmd)
@@ -549,6 +508,121 @@ object RootFirewallController {
         runRoot("tail -n $lines /data/local/tmp/firewall_agent/logs/controller.log")
 
     fun runRaw(command: String): ExecResult = runRoot(command)
+
+    fun applyGlobalStrict(firewallUid: Int): ExecResult {
+        val out4 = "FA_GLOBAL_OUT"
+        val in4 = "FA_GLOBAL_IN"
+        val out6 = "FA_GLOBAL_OUT6"
+        val in6 = "FA_GLOBAL_IN6"
+        val cmd = buildString {
+            append("if command -v ipset >/dev/null 2>&1; then ")
+            append("ipset -exist create fa_allow_v4 hash:ip family inet;")
+            append("ipset -exist create fa_allow_v6 hash:ip family inet6;")
+            append("ipset -exist create fa_block_v4 hash:ip family inet;")
+            append("ipset -exist create fa_block_v6 hash:ip family inet6;")
+            append("fi;")
+            append("iptables -N $out4 >/dev/null 2>&1 || true;")
+            append("iptables -N $in4 >/dev/null 2>&1 || true;")
+            append("iptables -F $out4 >/dev/null 2>&1 || true;")
+            append("iptables -F $in4 >/dev/null 2>&1 || true;")
+
+            append("iptables -A $out4 -o lo -j RETURN >/dev/null 2>&1;")
+            append("iptables -A $out4 -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN >/dev/null 2>&1;")
+            append("iptables -A $out4 -m owner --uid-owner $firewallUid -j RETURN >/dev/null 2>&1;")
+            append("iptables -A $out4 -m owner --uid-owner 2000 -j RETURN >/dev/null 2>&1;")
+            append("iptables -A $out4 -p tcp --dport 5555 -j RETURN >/dev/null 2>&1;")
+            append("iptables -A $out4 -m set --match-set fa_block_v4 dst -j DROP >/dev/null 2>&1;")
+            append("iptables -A $out4 -m set --match-set fa_allow_v4 dst -j RETURN >/dev/null 2>&1;")
+            append("iptables -A $out4 -j DROP >/dev/null 2>&1;")
+
+            append("iptables -A $in4 -i lo -j RETURN >/dev/null 2>&1;")
+            append("iptables -A $in4 -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN >/dev/null 2>&1;")
+            append("iptables -A $in4 -p tcp --dport 5555 -j RETURN >/dev/null 2>&1;")
+            append("iptables -A $in4 -j DROP >/dev/null 2>&1;")
+
+            append("while iptables -C OUTPUT -j $out4 >/dev/null 2>&1; do iptables -D OUTPUT -j $out4 >/dev/null 2>&1 || break; done;")
+            append("while iptables -C INPUT -j $in4 >/dev/null 2>&1; do iptables -D INPUT -j $in4 >/dev/null 2>&1 || break; done;")
+            append("iptables -I OUTPUT 1 -j $out4 >/dev/null 2>&1 || true;")
+            append("iptables -I INPUT 1 -j $in4 >/dev/null 2>&1 || true;")
+
+            append("if command -v ip6tables >/dev/null 2>&1; then ")
+            append("ip6tables -N $out6 >/dev/null 2>&1 || true;")
+            append("ip6tables -N $in6 >/dev/null 2>&1 || true;")
+            append("ip6tables -F $out6 >/dev/null 2>&1 || true;")
+            append("ip6tables -F $in6 >/dev/null 2>&1 || true;")
+            append("ip6tables -A $out6 -o lo -j RETURN >/dev/null 2>&1;")
+            append("ip6tables -A $out6 -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN >/dev/null 2>&1;")
+            append("ip6tables -A $out6 -m owner --uid-owner $firewallUid -j RETURN >/dev/null 2>&1;")
+            append("ip6tables -A $out6 -m owner --uid-owner 2000 -j RETURN >/dev/null 2>&1;")
+            append("ip6tables -A $out6 -m set --match-set fa_block_v6 dst -j DROP >/dev/null 2>&1;")
+            append("ip6tables -A $out6 -m set --match-set fa_allow_v6 dst -j RETURN >/dev/null 2>&1;")
+            append("ip6tables -A $out6 -j DROP >/dev/null 2>&1;")
+            append("ip6tables -A $in6 -i lo -j RETURN >/dev/null 2>&1;")
+            append("ip6tables -A $in6 -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN >/dev/null 2>&1;")
+            append("ip6tables -A $in6 -j DROP >/dev/null 2>&1;")
+            append("while ip6tables -C OUTPUT -j $out6 >/dev/null 2>&1; do ip6tables -D OUTPUT -j $out6 >/dev/null 2>&1 || break; done;")
+            append("while ip6tables -C INPUT -j $in6 >/dev/null 2>&1; do ip6tables -D INPUT -j $in6 >/dev/null 2>&1 || break; done;")
+            append("ip6tables -I OUTPUT 1 -j $out6 >/dev/null 2>&1 || true;")
+            append("ip6tables -I INPUT 1 -j $in6 >/dev/null 2>&1 || true;")
+            append("fi;")
+            append("echo global_strict=on firewall_uid=$firewallUid;")
+        }
+        return runRoot(cmd)
+    }
+
+    fun disableGlobalStrict(): ExecResult {
+        val cmd = buildString {
+            append("for ch in FA_GLOBAL_OUT FA_GLOBAL_IN; do ")
+            append("while iptables -C OUTPUT -j ${'$'}ch >/dev/null 2>&1; do iptables -D OUTPUT -j ${'$'}ch >/dev/null 2>&1 || break; done;")
+            append("while iptables -C INPUT -j ${'$'}ch >/dev/null 2>&1; do iptables -D INPUT -j ${'$'}ch >/dev/null 2>&1 || break; done;")
+            append("iptables -F ${'$'}ch >/dev/null 2>&1 || true;")
+            append("iptables -X ${'$'}ch >/dev/null 2>&1 || true;")
+            append("done;")
+            append("if command -v ip6tables >/dev/null 2>&1; then ")
+            append("for ch in FA_GLOBAL_OUT6 FA_GLOBAL_IN6; do ")
+            append("while ip6tables -C OUTPUT -j ${'$'}ch >/dev/null 2>&1; do ip6tables -D OUTPUT -j ${'$'}ch >/dev/null 2>&1 || break; done;")
+            append("while ip6tables -C INPUT -j ${'$'}ch >/dev/null 2>&1; do ip6tables -D INPUT -j ${'$'}ch >/dev/null 2>&1 || break; done;")
+            append("ip6tables -F ${'$'}ch >/dev/null 2>&1 || true;")
+            append("ip6tables -X ${'$'}ch >/dev/null 2>&1 || true;")
+            append("done;")
+            append("fi;")
+            append("echo global_strict=off;")
+        }
+        return runRoot(cmd)
+    }
+
+    fun syncIpSets(
+        allowV4: Set<String>,
+        allowV6: Set<String>,
+        blockV4: Set<String>,
+        blockV6: Set<String>,
+    ): ExecResult {
+        val cmd = buildString {
+            append("if ! command -v ipset >/dev/null 2>&1; then echo ipset_missing >&2; exit 12; fi;")
+            append("ipset -exist create fa_allow_v4 hash:ip family inet;")
+            append("ipset -exist create fa_allow_v6 hash:ip family inet6;")
+            append("ipset -exist create fa_block_v4 hash:ip family inet;")
+            append("ipset -exist create fa_block_v6 hash:ip family inet6;")
+            append("ipset -exist create fa_allow_v4_tmp hash:ip family inet;")
+            append("ipset -exist create fa_allow_v6_tmp hash:ip family inet6;")
+            append("ipset -exist create fa_block_v4_tmp hash:ip family inet;")
+            append("ipset -exist create fa_block_v6_tmp hash:ip family inet6;")
+            append("ipset flush fa_allow_v4_tmp;")
+            append("ipset flush fa_allow_v6_tmp;")
+            append("ipset flush fa_block_v4_tmp;")
+            append("ipset flush fa_block_v6_tmp;")
+            allowV4.forEach { ip -> append("ipset -exist add fa_allow_v4_tmp ${shellWord(ip)};") }
+            allowV6.forEach { ip -> append("ipset -exist add fa_allow_v6_tmp ${shellWord(ip)};") }
+            blockV4.forEach { ip -> append("ipset -exist add fa_block_v4_tmp ${shellWord(ip)};") }
+            blockV6.forEach { ip -> append("ipset -exist add fa_block_v6_tmp ${shellWord(ip)};") }
+            append("ipset swap fa_allow_v4_tmp fa_allow_v4;")
+            append("ipset swap fa_allow_v6_tmp fa_allow_v6;")
+            append("ipset swap fa_block_v4_tmp fa_block_v4;")
+            append("ipset swap fa_block_v6_tmp fa_block_v6;")
+            append("echo ipset_sync=ok allow_v4=${allowV4.size} allow_v6=${allowV6.size} block_v4=${blockV4.size} block_v6=${blockV6.size};")
+        }
+        return runRoot(cmd)
+    }
 
     private fun clearAppChainsScript(): String {
         return buildString {
@@ -624,4 +698,6 @@ object RootFirewallController {
             stderr = fallback.err.joinToString("\n"),
         )
     }
+
+    private fun shellWord(value: String): String = "'${value.replace("'", "'\"'\"'")}'"
 }

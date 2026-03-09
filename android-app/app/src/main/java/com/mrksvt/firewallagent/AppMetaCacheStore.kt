@@ -70,6 +70,7 @@ object AppMetaCacheStore {
             val uid = ai.uid
             if (pkg.isBlank() || uid <= 0) return@forEach
             val name = ai.loadLabel(pm)?.toString()?.trim().orEmpty().ifBlank { pkg }
+            AppIconCacheStore.save(context, pkg, ai.loadIcon(pm))
             val row = JSONObject()
             row.put("pkg", pkg)
             row.put("name", name)
@@ -94,6 +95,7 @@ object AppMetaCacheStore {
             }
         }.getOrNull()
         val name = ai?.loadLabel(pm)?.toString()?.trim().orEmpty().ifBlank { pkg }
+        AppIconCacheStore.save(context, pkg, ai?.loadIcon(pm))
         val type = if (ai != null) classifyType(ai, uid) else "user"
         val install = runCatching {
             if (Build.VERSION.SDK_INT >= 33) {
@@ -112,6 +114,7 @@ object AppMetaCacheStore {
         if (pkg.isBlank()) return
         val next = read(context).filterNot { it.packageName == pkg }
         saveList(context, next)
+        AppIconCacheStore.remove(context, pkg)
     }
 
     private fun saveList(context: Context, list: List<CachedAppMeta>) {
@@ -144,4 +147,3 @@ object AppMetaCacheStore {
         return if (systemFlag || updatedSystemFlag) "system" else "user"
     }
 }
-

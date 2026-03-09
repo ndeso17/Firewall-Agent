@@ -1,10 +1,16 @@
 package com.mrksvt.firewallagent
 
 import android.os.Bundle
+import android.content.Intent
+import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.AdapterView
+import android.widget.CheckBox
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.mrksvt.firewallagent.databinding.ActivityAdguardBinding
 import kotlinx.coroutines.Dispatchers
@@ -130,6 +136,7 @@ class AdGuardActivity : AppCompatActivity() {
         ),
     )
     private var latencyByHost: Map<String, Int> = emptyMap()
+    private var latestMatcherCandidates: List<MatcherCandidate> = emptyList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -146,11 +153,15 @@ class AdGuardActivity : AppCompatActivity() {
         binding.reloadBtn.setOnClickListener { readCurrent() }
         binding.pingAllBtn.setOnClickListener { pingAllProviders(selectBest = false) }
         binding.autoBestBtn.setOnClickListener { pingAllProviders(selectBest = true) }
+        binding.openAdsMatcherBtn.setOnClickListener {
+            startActivity(Intent(this, AdsMatcherActivity::class.java))
+        }
 
         // Bypass management buttons
         binding.bypassSyncBtn.setOnClickListener { syncBypassUidsAndApply() }
         binding.bypassStatusBtn.setOnClickListener { showBypassStatus() }
 
+        binding.customMatcherSection.visibility = View.GONE
         pingAllProviders(selectBest = true)
         readCurrent()
         showBypassStatus()
@@ -338,6 +349,9 @@ class AdGuardActivity : AppCompatActivity() {
 
     private fun setDnsFirewallLock(enable: Boolean) {
         lifecycleScope.launch {
+            if (enable) {
+                withContext(Dispatchers.IO) { BlacklistFeedSync.syncIfDue(applicationContext, force = true) }
+            }
             // Sync bypass UIDs before building the lock script
             withContext(Dispatchers.IO) { DnsBypassStore.syncBypassUids(applicationContext) }
             val bypassUids = withContext(Dispatchers.IO) { DnsBypassStore.loadBypassUids(applicationContext) }
@@ -534,12 +548,273 @@ class AdGuardActivity : AppCompatActivity() {
 
     private fun buildMergedAdPatterns(): List<String> {
         val hookTail = RootFirewallController.runRaw(
-            "tail -n 2000 /data/adb/lspd/log/modules_*.log 2>/dev/null | grep -E 'FA.HybridAdHook|blocked loadUrl|blocked SDK' || true",
+            "tail -n 5000 /data/adb/lspd/log/modules_*.log 2>/dev/null | " +
+                "grep -E 'FA.HybridAdHook|FA.DnsHideHook' | " +
+                "grep -Ei 'blocked|intercepted|observe|net observe|net blocked' || true",
         )
-        val generated = AdMlScorer.buildMlPatterns(adHostPatterns, hookTail.stdout)
+        AdEventStore.mergeCurrentLog(this, hookTail.stdout)
+        val generated = AdMlScorer.buildMlPatternsFromEvents(
+            this,
+            adHostPatterns,
+            maxDynamic = 80,
+            minScore = 0.56,
+        ) + AdMlScorer.buildMlPatterns(
+            staticPatterns = adHostPatterns,
+            hybridLogRaw = hookTail.stdout,
+            maxDynamic = 80,
+            minScore = 0.62,
+        )
         if (generated.isNotEmpty()) AdMlScorer.saveDynamicPatterns(this, generated)
         val persisted = AdMlScorer.loadDynamicPatterns(this)
-        return AdMlScorer.mergePatterns(adHostPatterns, persisted)
+        val custom = AdMlScorer.loadUserPatterns(this)
+        val external = BlacklistFeedSync.loadCached(this).toList()
+        return AdMlScorer.mergePatterns(
+            AdMlScorer.mergePatterns(AdMlScorer.mergePatterns(adHostPatterns, persisted), custom),
+            external,
+        )
+    }
+
+    private fun loadCustomMatchers() {
+        val current = AdMlScorer.loadUserPatterns(this)
+        if (current.isNotEmpty()) {
+            binding.customPatternsInput.setText(current.joinToString("\n"))
+        }
+        renderCustomPatternStatus(current)
+    }
+
+    private fun loadMatcherCandidatesFromLogs() {
+        lifecycleScope.launch {
+            binding.outputText.text = "Memindai host kandidat dari log HybridAdHook..."
+            val candidates = withContext(Dispatchers.IO) {
+                val raw = RootFirewallController.runRaw(
+                    "grep -h -E 'FA.HybridAdHook|FA.DnsHideHook' /data/adb/lspd/log/modules_*.log 2>/dev/null | tail -n 40000",
+                )
+                val events = AdEventStore.mergeCurrentLog(this@AdGuardActivity, raw.stdout)
+                val existing = buildMergedAdPatterns().toSet()
+                val grouped = linkedMapOf<String, MutableMap<String, Int>>()
+                events.forEach { event ->
+                    val host = event.host.trim().lowercase()
+                    if (host.isBlank() || host == "-") return@forEach
+                    grouped.getOrPut(host) { linkedMapOf() }[event.status] =
+                        (grouped.getOrPut(host) { linkedMapOf() }[event.status] ?: 0) + 1
+                }
+                raw.stdout.lineSequence().forEach { line ->
+                    val lower = line.lowercase()
+                    val status = when {
+                        lower.contains("status=blocked") || lower.contains(" net blocked ") || lower.contains(" blocked ") -> "blocked"
+                        lower.contains("status=acc") || lower.contains(" net event ") -> "acc"
+                        else -> ""
+                    }
+                    if (status.isBlank()) return@forEach
+                    val url = Regex("""\burl=([^\s]+)""").find(line)?.groupValues?.getOrNull(1).orEmpty()
+                    if (url.isBlank()) return@forEach
+                    extractAdPathTokens(url).forEach { token ->
+                        grouped.getOrPut(token) { linkedMapOf() }[status] =
+                            (grouped.getOrPut(token) { linkedMapOf() }[status] ?: 0) + 1
+                    }
+                }
+                grouped.entries
+                    .map { (host, statusCounts) ->
+                        MatcherCandidate(
+                            host = host,
+                            statusCounts = statusCounts.toMap(),
+                            alreadyMatched = host in existing,
+                        )
+                    }
+                    .sortedWith(
+                        compareByDescending<MatcherCandidate> { it.totalCount }
+                            .thenBy { it.host },
+                    )
+                    .take(60)
+            }
+            latestMatcherCandidates = candidates
+            renderMatcherCandidates(candidates)
+            binding.outputText.text = "Kandidat dari log: ${candidates.size} host"
+        }
+    }
+
+    private fun appendSelectedMatcherCandidates() {
+        val selected = mutableListOf<String>()
+        for (i in 0 until binding.customPatternsLogContainer.childCount) {
+            val row = binding.customPatternsLogContainer.getChildAt(i) as? LinearLayout ?: continue
+            val top = row.getChildAt(0) as? LinearLayout ?: continue
+            val cb = top.getChildAt(0) as? CheckBox ?: continue
+            if (cb.isChecked) {
+                val host = cb.tag as? String ?: continue
+                selected += host
+            }
+        }
+        if (selected.isEmpty()) {
+            Toast.makeText(this, "Tidak ada host yang dipilih.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val existing = parsePatternInput(binding.customPatternsInput.text?.toString().orEmpty()).toMutableList()
+        selected.forEach { host ->
+            if (host !in existing) existing += host
+        }
+        binding.customPatternsInput.setText(existing.joinToString("\n"))
+        renderCustomPatternStatus(existing)
+        Toast.makeText(this, "${selected.size} host ditambahkan ke input matcher.", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun autoSelectNewMatcherCandidates() {
+        var selectedCount = 0
+        for (i in 0 until binding.customPatternsLogContainer.childCount) {
+            val row = binding.customPatternsLogContainer.getChildAt(i) as? LinearLayout ?: continue
+            val top = row.getChildAt(0) as? LinearLayout ?: continue
+            val cb = top.getChildAt(0) as? CheckBox ?: continue
+            if (cb.isEnabled && !cb.isChecked) {
+                cb.isChecked = true
+                selectedCount++
+            }
+        }
+        Toast.makeText(this, "Auto pilih: $selectedCount host baru.", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun saveCustomMatchers() {
+        lifecycleScope.launch {
+            val patterns = parsePatternInput(binding.customPatternsInput.text?.toString().orEmpty())
+            AdMlScorer.saveUserPatterns(this@AdGuardActivity, patterns)
+            renderCustomPatternStatus(patterns)
+            Toast.makeText(
+                this@AdGuardActivity,
+                "Custom matcher disimpan: ${patterns.size} pattern",
+                Toast.LENGTH_SHORT,
+            ).show()
+            val lockEnabled = getSharedPreferences("adguard_dns", MODE_PRIVATE).getBoolean("dns_lock_enabled", false)
+            if (lockEnabled) {
+                setDnsFirewallLock(true)
+            } else {
+                binding.outputText.text = "Custom matcher disimpan. Tekan 'Enable Lock' agar rule iptables memakai pattern terbaru."
+            }
+        }
+    }
+
+    private fun previewCustomMatchers() {
+        lifecycleScope.launch {
+            val merged = withContext(Dispatchers.IO) { buildMergedAdPatterns() }
+            binding.outputText.text = buildString {
+                appendLine("=== Matcher Aktif (${merged.size}) ===")
+                merged.take(120).forEach { appendLine(it) }
+                if (merged.size > 120) appendLine("... ${merged.size - 120} matcher lain")
+            }
+            renderCustomPatternStatus(AdMlScorer.loadUserPatterns(this@AdGuardActivity))
+        }
+    }
+
+    private fun renderCustomPatternStatus(custom: List<String>) {
+        binding.customPatternsStatusText.text = buildString {
+            appendLine("Custom matcher tersimpan: ${custom.size}")
+            if (custom.isEmpty()) {
+                appendLine("Belum ada matcher tambahan.")
+            } else {
+                custom.take(20).forEach { appendLine("• $it") }
+                if (custom.size > 20) appendLine("... ${custom.size - 20} matcher lain")
+            }
+        }.trimEnd()
+    }
+
+    private fun renderMatcherCandidates(candidates: List<MatcherCandidate>) {
+        val container = binding.customPatternsLogContainer
+        container.removeAllViews()
+        binding.customPatternsLogEmptyText.text = if (candidates.isEmpty()) {
+            "Belum ada kandidat host dari log."
+        } else {
+            "Pilih host dari log untuk ditambahkan ke matcher:"
+        }
+        latestMatcherCandidates = candidates
+        if (candidates.isEmpty()) return
+
+        candidates.forEach { item ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, dp(4), 0, dp(4))
+            }
+            val top = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+            }
+            val cb = CheckBox(this).apply {
+                text = item.host
+                tag = item.host
+                isEnabled = !item.alreadyMatched
+                if (item.alreadyMatched) {
+                    text = "${item.host} (sudah aktif)"
+                    setTextColor(0xFF6B7280.toInt())
+                } else {
+                    setTextColor(0xFFE5E7EB.toInt())
+                }
+                buttonTintList = ContextCompat.getColorStateList(this@AdGuardActivity, android.R.color.holo_green_light)
+            }
+            val stats = TextView(this).apply {
+                text = item.statusCounts.entries
+                    .sortedByDescending { it.value }
+                    .joinToString(" | ") { "${it.key}:${it.value}" }
+                setTextColor(0xFF9CA3AF.toInt())
+                textSize = 11f
+                setPadding(dp(32), 0, 0, 0)
+            }
+            top.addView(cb)
+            row.addView(top)
+            row.addView(stats)
+            container.addView(row)
+        }
+    }
+
+    private fun parsePatternInput(raw: String): List<String> {
+        return raw.split(Regex("[,\\n]+"))
+            .map { it.trim().lowercase() }
+            .map {
+                when {
+                    it.startsWith("http://") || it.startsWith("https://") -> runCatching { URI(it).host.orEmpty() }.getOrDefault("")
+                    else -> it
+                }
+            }
+            .map { it.removePrefix("www.") }
+            .map { it.filter { ch -> ch.isLetterOrDigit() || ch == '.' || ch == '-' || ch == '_' || ch == '/' } }
+            .filter { it.isNotBlank() }
+            .distinct()
+    }
+
+    private fun extractAdPathTokens(urlRaw: String): List<String> {
+        if (urlRaw.isBlank()) return emptyList()
+        val lower = urlRaw.lowercase()
+        val tokenHits = linkedSetOf<String>()
+        val markers = listOf(
+            "pagead",
+            "adview",
+            "adnw_sync2",
+            "adnw",
+            "doubleclick",
+            "googleads",
+            "adservice",
+            "googlesyndication",
+            "adx",
+            "omsdk",
+            "mraid",
+            "vast",
+            "beacon",
+            "interstitial",
+            "rewarded",
+            "reward",
+            "tracking",
+            "clickid",
+            "utm_",
+        )
+        markers.forEach { marker ->
+            if (lower.contains(marker)) tokenHits += marker
+        }
+        runCatching {
+            val uri = URI(urlRaw)
+            val path = uri.path.orEmpty().lowercase()
+            if (path.isNotBlank()) {
+                path.split('/').forEach { seg ->
+                    val s = seg.trim()
+                    if (s.length < 4) return@forEach
+                    if (markers.any { s.contains(it) }) tokenHits += s
+                }
+            }
+        }
+        return tokenHits.toList()
     }
 
     private fun buildAdsFirewallEnableScript(patterns: List<String>): String = buildString {
@@ -555,5 +830,15 @@ class AdGuardActivity : AppCompatActivity() {
         append("fi;")
         append("while iptables -C OUTPUT -j FA_ADS > /dev/null 2>&1; do iptables -D OUTPUT -j FA_ADS > /dev/null 2>&1 || break; done;")
         append("iptables -I OUTPUT 1 -j FA_ADS;")
+    }
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    private data class MatcherCandidate(
+        val host: String,
+        val statusCounts: Map<String, Int>,
+        val alreadyMatched: Boolean,
+    ) {
+        val totalCount: Int get() = statusCounts.values.sum()
     }
 }

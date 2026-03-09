@@ -180,6 +180,44 @@
         </RadioGroup>
     </HorizontalScrollView>
 
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingHorizontal="12dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="4dp">
+
+        <Button
+            android:id="@+id/checkAllBtn"
+            android:layout_width="0dp"
+            android:layout_height="34dp"
+            android:layout_weight="1"
+            android:text="Check all"
+            android:textAllCaps="false"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/uncheckAllBtn"
+            android:layout_width="0dp"
+            android:layout_height="34dp"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:text="Uncheck all"
+            android:textAllCaps="false"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/restoreCheckBtn"
+            android:layout_width="0dp"
+            android:layout_height="34dp"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:text="Restore check"
+            android:textAllCaps="false"
+            android:textSize="12sp" />
+    </LinearLayout>
+
     <HorizontalScrollView
         android:id="@+id/appsScroll"
         android:layout_width="match_parent"
@@ -220,8 +258,6 @@
                 <ImageView android:layout_width="58dp" android:layout_height="20dp" android:layout_gravity="center_vertical" android:scaleType="centerInside" android:src="@drawable/ic_col_vpn" android:tint="#D1D5DB" />
                 <ImageView android:layout_width="58dp" android:layout_height="20dp" android:layout_gravity="center_vertical" android:scaleType="centerInside" android:src="@drawable/ic_col_bt" android:tint="#D1D5DB" />
                 <ImageView android:layout_width="58dp" android:layout_height="20dp" android:layout_gravity="center_vertical" android:scaleType="centerInside" android:src="@drawable/ic_col_tor" android:tint="#D1D5DB" />
-                <ImageView android:layout_width="58dp" android:layout_height="20dp" android:layout_gravity="center_vertical" android:scaleType="centerInside" android:src="@drawable/ic_download_20" android:tint="#D1D5DB" />
-                <ImageView android:layout_width="58dp" android:layout_height="20dp" android:layout_gravity="center_vertical" android:scaleType="centerInside" android:src="@drawable/ic_upload_20" android:tint="#D1D5DB" />
             </LinearLayout>
 
             <androidx.recyclerview.widget.RecyclerView
@@ -255,6 +291,51 @@
         android:typeface="monospace"
         android:visibility="gone" />
 </LinearLayout>
+
+    <FrameLayout
+        android:id="@+id/applyFab"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="18dp"
+        android:layout_marginBottom="92dp"
+        android:background="@drawable/bg_apply_fab_circle"
+        android:clickable="true"
+        android:contentDescription="Apply rules"
+        android:elevation="6dp"
+        android:focusable="true">
+
+        <ImageView
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="10dp"
+            android:src="@drawable/ic_apply_rules"
+            android:tint="#FFFFFF" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_marginBottom="8dp"
+            android:gravity="center"
+            android:text="Apply"
+            android:textColor="#FFFFFF"
+            android:textSize="10sp"
+            android:textStyle="bold" />
+    </FrameLayout>
+
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/refreshAppsFab"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="18dp"
+        android:layout_marginBottom="164dp"
+        android:contentDescription="Refresh app list"
+        app:backgroundTint="#1FA122"
+        app:srcCompat="@android:drawable/ic_popup_sync"
+        app:tint="#FFFFFF" />
 
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/statusFab"

@@ -243,23 +243,16 @@ class HybridAdHook : IXposedHookLoadPackage {
 
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
         val pkg = (lpparam.packageName ?: "").trim()
-        XposedBridge.log(
-            "FA.HybridAdHook handleLoadPackage called: pkg=$pkg " +
-                "uid=${Process.myUid()}",
-        )
         if (pkg.isBlank()) {
-            XposedBridge.log("FA.HybridAdHook skip init: blank package")
             return
         }
         if (pkg == "android" || pkg == "com.android.systemui" || pkg == "com.mrksvt.firewallagent") {
-            XposedBridge.log("FA.HybridAdHook skip pkg=$pkg (reserved package)")
             return
         }
         val isScoped = scopedPackages.contains(pkg)
         val isWebViewBridgeForStrictUid = isWebViewBridgePackageForStrictUid(pkg)
         val isBrowserGuard = isBrowserGuardPackage(pkg)
         if (!isScoped && !isWebViewBridgeForStrictUid && !isBrowserGuard) {
-            XposedBridge.log("FA.HybridAdHook skip pkg=$pkg (not in scope)")
             return
         }
         if (isWebViewBridgeForStrictUid) {

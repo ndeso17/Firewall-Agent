@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#1A1A2E"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="14dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/backBtn"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:backgroundTint="#1F2937"
+                android:text="← Back"
+                android:textAllCaps="false"
+                android:textColor="#CBD5E1" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_vertical"
+                android:layout_marginStart="10dp"
+                android:layout_weight="1"
+                android:text="Ads Matcher"
+                android:textColor="#6EE7B7"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="Halaman khusus untuk custom URL matcher (host/path/token) yang dipelajari dari log."
+            android:textColor="#9CA3AF"
+            android:textSize="12sp" />
+
+        <EditText
+            android:id="@+id/customPatternsInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="#0D0D1A"
+            android:gravity="top"
+            android:hint="pagead&#10;adnw_sync2&#10;omsdk&#10;my-custom-ad-host.com"
+            android:inputType="textMultiLine"
+            android:minLines="4"
+            android:padding="10dp"
+            android:textColor="#E5E7EB"
+            android:textColorHint="#4B5563"
+            android:typeface="monospace" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/customPatternsSaveBtn"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:backgroundTint="#065F46"
+                android:text="💾 Simpan Matcher"
+                android:textAllCaps="false"
+                android:textColor="#D1FAE5" />
+
+            <Space
+                android:layout_width="8dp"
+                android:layout_height="1dp" />
+
+            <Button
+                android:id="@+id/customPatternsPreviewBtn"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:backgroundTint="#1F2937"
+                android:text="👁️ Lihat Aktif"
+                android:textAllCaps="false"
+                android:textColor="#CBD5E1" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/customPatternsLoadLogBtn"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:backgroundTint="#0F3460"
+                android:text="📥 Ambil Dari Log"
+                android:textAllCaps="false"
+                android:textColor="#87CEEB" />
+
+            <Space
+                android:layout_width="8dp"
+                android:layout_height="1dp" />
+
+            <Button
+                android:id="@+id/customPatternsAddSelectedBtn"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:backgroundTint="#1D4ED8"
+                android:text="➕ Tambah Terpilih"
+                android:textAllCaps="false"
+                android:textColor="#DBEAFE" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/customPatternsAutoSelectBtn"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:backgroundTint="#365314"
+            android:text="✅ Auto Pilih Host/Token Baru"
+            android:textAllCaps="false"
+            android:textColor="#ECFCCB" />
+
+        <TextView
+            android:id="@+id/customPatternsStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="#0D0D1A"
+            android:padding="10dp"
+            android:textColor="#9CA3AF"
+            android:textSize="11sp"
+            android:typeface="monospace" />
+
+        <TextView
+            android:id="@+id/customPatternsLogEmptyText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Belum ada kandidat host/token dari log."
+            android:textColor="#6B7280"
+            android:textSize="11sp" />
+
+        <LinearLayout
+            android:id="@+id/customPatternsLogContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:orientation="vertical" />
+
+        <TextView
+            android:id="@+id/outputText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:background="#0D0D1A"
+            android:padding="12dp"
+            android:textColor="#9CA3AF"
+            android:textSize="12sp"
+            android:typeface="monospace" />
+    </LinearLayout>
+</ScrollView>

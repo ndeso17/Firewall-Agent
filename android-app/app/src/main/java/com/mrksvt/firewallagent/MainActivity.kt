@@ -1,6 +1,7 @@
 package com.mrksvt.firewallagent
 
 import android.Manifest
+import android.app.ActivityManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -65,10 +66,15 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.time.Instant
 import java.util.Locale
 import kotlin.math.roundToInt
 
 class MainActivity : AppCompatActivity() {
+    companion object {
+        @Volatile private var bootSessionInitialized: Boolean = false
+    }
+
     private val tag = "FA.PackageAddedUI"
     private lateinit var binding: ActivityMainBinding
     private lateinit var adapter: AppRulesAdapter
@@ -102,15 +108,32 @@ class MainActivity : AppCompatActivity() {
     private var applyProgressDialog: AlertDialog? = null
     private var applyProgressState: MutableState<ApplyProgressModel>? = null
     private var backendBusyDialog: AlertDialog? = null
+    private lateinit var startupLoadingDialog: LoadingDialogController
+    private var startupLoadingActive: Boolean = false
+    private var customLoadingActive: Boolean = false
     private var backendBusyDepth: Int = 0
     private var appInForeground: Boolean = false
     private var packageRefreshJob: Job? = null
     private var inventoryObserveJob: Job? = null
     private var lastPackageSnapshot: Set<String> = emptySet()
     private var lastInventoryVersion: Long = 0L
+    private var lastOnStartMaintenanceAtMs: Long = 0L
+    private var lastFullAppsLoadAtMs: Long = 0L
+    private val appListCachePrefsName = "fa_app_list_cache_state"
+    private val appListCacheLastFullLoadKey = "last_full_load_ms"
+    private val onStartMaintenanceMinIntervalMs: Long = 60_000L
+    private val lowRamFastReuseWindowMs: Long = 120_000L
+    private val appListCacheReuseWindowMs: Long = 5 * 60_000L
+    private val lowRamDevice: Boolean by lazy {
+        val am = getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        am?.isLowRamDevice ?: false
+    }
     private var appsReloadJob: Job? = null
     @Volatile private var appsLoadInProgress: Boolean = false
     @Volatile private var pendingAppsReload: Boolean = false
+    private val startupStatePrefsName = "fa_startup_state"
+    private val startupBootIdKey = "boot_id"
+    private val startupInitDoneKey = "init_done"
     private var lastProgressNotifProcessed: Int = -1
     private var lastProgressNotifAtMs: Long = 0L
     private var lastProgressUiProcessed: Int = -1
@@ -168,8 +191,6 @@ class MainActivity : AppCompatActivity() {
                                     vpn = false,
                                     bluetooth = false,
                                     tor = false,
-                                    download = false,
-                                    upload = false,
                                 )
                                 RootFirewallController.applyAppRulesIncremental(
                                     upsertRules = listOf(denyRule),
@@ -215,8 +236,14 @@ class MainActivity : AppCompatActivity() {
         registerPackageEvents()
         startInventoryObserver()
         startPackageAutoRefresh()
-        forceCleanupOrphansOnOpen()
-        requestInventorySync("onStart")
+        val nowMs = System.currentTimeMillis()
+        val shouldRunOnStartMaintenance =
+            !lowRamDevice || (nowMs - lastOnStartMaintenanceAtMs) >= onStartMaintenanceMinIntervalMs
+        if (shouldRunOnStartMaintenance) {
+            lastOnStartMaintenanceAtMs = nowMs
+            forceCleanupOrphansOnOpen()
+            requestInventorySync("onStart")
+        }
         if (applyInProgress && applyProgressDialog == null) {
             showApplyProgressDialog(
                 latestApplyProgress.processed,
@@ -225,7 +252,7 @@ class MainActivity : AppCompatActivity() {
                 latestApplyProgress.phase,
             )
         }
-        if (!applyInProgress && backendBusyDepth > 0 && backendBusyDialog == null) {
+        if (!applyInProgress && !startupLoadingActive && !customLoadingActive && backendBusyDepth > 0 && backendBusyDialog == null) {
             showBackendBusyDialog()
         }
         pendingApplySummary?.let { pending ->
@@ -252,17 +279,28 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        startupLoadingDialog = LoadingDialogController(this)
+        lastFullAppsLoadAtMs = getSharedPreferences(appListCachePrefsName, MODE_PRIVATE)
+            .getLong(appListCacheLastFullLoadKey, 0L)
 
         RootFirewallController.init(applicationContext)
         NotifyHelper.ensureChannel(this)
         ensureKeepAliveService()
         promptIgnoreBatteryOptimizationIfNeeded()
         requestNotifIfNeeded()
+        lifecycleScope.launch(Dispatchers.IO) {
+            if (lowRamDevice) {
+                LogSnapshotCache.prewarmLite(applicationContext)
+            } else {
+                LogSnapshotCache.prewarm(applicationContext)
+            }
+        }
 
         adapter = AppRulesAdapter(emptyList()) { saveAppPerm(it) }
         binding.appsRecycler.layoutManager = LinearLayoutManager(this)
         binding.appsRecycler.adapter = adapter
         binding.appsScroll.post { binding.appsScroll.scrollTo(0, 0) }
+        preloadAppsFromUserData()
 
         initProfileUi()
         setSearchMode(false)
@@ -294,6 +332,13 @@ class MainActivity : AppCompatActivity() {
             }
             refreshList()
         }
+        binding.checkAllBtn.setOnClickListener { bulkSetChecks(true) }
+        binding.uncheckAllBtn.setOnClickListener { bulkSetChecks(false) }
+        binding.restoreCheckBtn.setOnClickListener { restoreBulkChecks() }
+        binding.applyFab.setOnClickListener {
+            applySelectedRules()
+        }
+        binding.refreshAppsFab.setOnClickListener { refreshAppsFromFab() }
         binding.statusFab.setOnClickListener { onStatusFabClicked() }
 
         handleLaunchIntent(intent)
@@ -474,7 +519,10 @@ class MainActivity : AppCompatActivity() {
         if (busy) {
             backendBusyDepth += 1
             binding.progress.visibility = View.VISIBLE
-            if (!applyInProgress && appInForeground) {
+            if ((startupLoadingActive || customLoadingActive) && backendBusyDialog != null) {
+                dismissBackendBusyDialog()
+            }
+            if (!applyInProgress && appInForeground && !startupLoadingActive && !customLoadingActive) {
                 showBackendBusyDialog()
             }
             return
@@ -487,6 +535,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showBackendBusyDialog() {
+        if (startupLoadingActive || customLoadingActive) return
         if (backendBusyDialog != null) return
         val pad = (24 * resources.displayMetrics.density).toInt()
         val gap = (14 * resources.displayMetrics.density).toInt()
@@ -530,22 +579,77 @@ class MainActivity : AppCompatActivity() {
 
     private fun checkRootAndLoad() {
         lifecycleScope.launch {
-            setBusy(true)
-            val rooted = withContext(Dispatchers.IO) { RootFirewallController.checkRoot() }
-            rootAvailable = rooted
-
-            val status = withContext(Dispatchers.IO) { RootFirewallController.status() }
-            cacheServiceState(status)
-            if (rooted && !currentFirewallEnabled) {
-                withContext(Dispatchers.IO) { RootFirewallController.clearAppChains() }
+            val firstInitInSession = !isBootSessionInitialized()
+            startupLoadingActive = firstInitInSession
+            if (firstInitInSession) {
+                dismissBackendBusyDialog()
+                startupLoadingDialog.showProgress(
+                    title = "Starting App",
+                    processed = 5,
+                    total = 100,
+                    phase = "Memvalidasi akses root...",
+                )
             }
-            updateStatusFab(rooted, status.ok)
-            syncPersistentNotification()
-            updateCellularRuleIcon()
+            setBusy(firstInitInSession)
+            try {
+                val rooted = withContext(Dispatchers.IO) { RootFirewallController.checkRoot() }
+                rootAvailable = rooted
+                if (firstInitInSession) {
+                    startupLoadingDialog.updateProgress(
+                        title = "Starting App",
+                        processed = 20,
+                        total = 100,
+                        phase = "Memuat status backend...",
+                    )
+                }
 
-            loadInstalledApps()
-            cleanupOrphanManagedUids()
-            setBusy(false)
+                val status = withContext(Dispatchers.IO) { RootFirewallController.status() }
+                cacheServiceState(status)
+                if (rooted && !currentFirewallEnabled) {
+                    withContext(Dispatchers.IO) { RootFirewallController.clearAppChains() }
+                }
+                updateStatusFab(rooted, status.ok)
+                syncPersistentNotification()
+                updateCellularRuleIcon()
+                if (firstInitInSession) {
+                    startupLoadingDialog.updateProgress(
+                        title = "Starting App",
+                        processed = 42,
+                        total = 100,
+                        phase = "Sinkronisasi daftar aplikasi...",
+                    )
+                    loadInstalledApps(forceFullRefresh = false, cacheOnlyIfAvailable = false)
+                    startupLoadingDialog.updateProgress(
+                        title = "Starting App",
+                        processed = 84,
+                        total = 100,
+                        phase = "Membersihkan orphan rules...",
+                    )
+                    cleanupOrphanManagedUids()
+                    startupLoadingDialog.updateProgress(
+                        title = "Starting App",
+                        processed = 100,
+                        total = 100,
+                        phase = "Finalisasi...",
+                    )
+                    startupLoadingDialog.dismissProgress()
+                    if (rooted) {
+                        startupLoadingDialog.showSuccess(
+                            title = "Startup Selesai",
+                            message = "Firewall Agent siap digunakan.",
+                        )
+                    }
+                } else if (allApps.isEmpty()) {
+                    loadInstalledApps(forceFullRefresh = false, cacheOnlyIfAvailable = true)
+                }
+                markBootSessionInitialized()
+            } finally {
+                if (firstInitInSession) {
+                    setBusy(false)
+                    startupLoadingActive = false
+                    startupLoadingDialog.dismissProgress()
+                }
+            }
         }
     }
 
@@ -592,7 +696,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private suspend fun loadInstalledApps() {
+    private suspend fun loadInstalledApps(
+        forceFullRefresh: Boolean = false,
+        cacheOnlyIfAvailable: Boolean = false,
+    ) {
         if (appsLoadInProgress) {
             pendingAppsReload = true
             return
@@ -611,12 +718,37 @@ class MainActivity : AppCompatActivity() {
                         uid = row.uid,
                         type = row.type,
                         installTime = row.installTime,
-                        icon = null,
+                        icon = AppIconCacheStore.load(applicationContext, row.packageName),
                         perms = loadPerms(row.packageName),
                     )
                 }
                 refreshList()
                 showOutput("Apps cache loaded: ${allApps.size}")
+                val now = System.currentTimeMillis()
+                val reuseWindow = if (lowRamDevice) {
+                    maxOf(lowRamFastReuseWindowMs, appListCacheReuseWindowMs)
+                } else {
+                    appListCacheReuseWindowMs
+                }
+                if (cacheOnlyIfAvailable) {
+                    showOutput("Apps cache reused (cache-only mode).")
+                    syncFromInventory("cache_only_reuse")
+                    return
+                }
+                if (!forceFullRefresh && allApps.isNotEmpty() && (now - lastFullAppsLoadAtMs) < reuseWindow) {
+                    showOutput("Apps cache reused: full refresh ditunda.")
+                    syncFromInventory("startup_cache_reuse")
+                    return
+                }
+            }
+            if (cacheOnlyIfAvailable && allApps.isEmpty()) {
+                val inventoryRows = withContext(Dispatchers.IO) { loadRowsFromInventoryStore() }
+                if (inventoryRows.isNotEmpty()) {
+                    allApps = inventoryRows
+                    refreshList()
+                    showOutput("Apps loaded from user inventory: ${allApps.size}")
+                    return
+                }
             }
 
             val (launcherMeta, packageInfos) = withContext(Dispatchers.IO) {
@@ -647,7 +779,7 @@ class MainActivity : AppCompatActivity() {
                     val ai = p?.applicationInfo ?: tryLoadAppInfo(pm, pkg)
                     val uid = ai?.uid ?: return@mapNotNull null
                     val type = ai?.let { classifyType(it, uid) } ?: if (uid < 10000) "core" else "user"
-                    val appMeta = resolveAppMeta(pm, pkg, ai, launcherMeta[pkg])
+                    val appMeta = resolveAppMeta(pm, pkg, ai, launcherMeta[pkg], includeIcon = true)
                     val appName = appMeta.first
                     val icon = appMeta.second
                     val installTime = p?.firstInstallTime ?: 0L
@@ -666,6 +798,11 @@ class MainActivity : AppCompatActivity() {
             withContext(Dispatchers.IO) {
                 runCatching { AppMetaCacheStore.refreshSnapshot(applicationContext) }
             }
+            lastFullAppsLoadAtMs = System.currentTimeMillis()
+            getSharedPreferences(appListCachePrefsName, MODE_PRIVATE)
+                .edit()
+                .putLong(appListCacheLastFullLoadKey, lastFullAppsLoadAtMs)
+                .apply()
             showOutput("Apps loaded: ${allApps.size}")
             refreshList()
         } finally {
@@ -705,20 +842,21 @@ class MainActivity : AppCompatActivity() {
         pkg: String,
         ai: ApplicationInfo?,
         launcherMeta: Pair<String, Drawable?>?,
+        includeIcon: Boolean = true,
     ): Pair<String, Drawable?> {
         if (launcherMeta != null && launcherMeta.first.isNotBlank()) {
-            return launcherMeta
+            return if (includeIcon) launcherMeta else launcherMeta.first to null
         }
         if (ai != null) {
             val label = ai.loadLabel(pm)?.toString()?.takeIf { it.isNotBlank() } ?: pkg
-            return label to ai.loadIcon(pm)
+            return if (includeIcon) label to ai.loadIcon(pm) else label to null
         }
         val launch = pm.getLaunchIntentForPackage(pkg)
         if (launch != null) {
             val ri = pm.resolveActivity(launch, 0)
             if (ri != null) {
                 val label = ri.loadLabel(pm)?.toString()?.takeIf { it.isNotBlank() } ?: pkg
-                return label to ri.loadIcon(pm)
+                return if (includeIcon) label to ri.loadIcon(pm) else label to null
             }
         }
         return pkg to null
@@ -976,8 +1114,6 @@ class MainActivity : AppCompatActivity() {
                         vpn = false,
                         bluetooth = false,
                         tor = false,
-                        download = false,
-                        upload = false,
                     )
                 }
             }
@@ -1016,8 +1152,6 @@ class MainActivity : AppCompatActivity() {
             .put("vpn", false)
             .put("bluetooth_tethering", false)
             .put("tor", false)
-            .put("download", false)
-            .put("upload", false)
             .toString()
 
         val targets = availableProfiles.ifEmpty { listOf("anlap") }
@@ -1074,8 +1208,6 @@ class MainActivity : AppCompatActivity() {
         "vpn" to true,
         "bluetooth_tethering" to false,
         "tor" to false,
-        "download" to true,
-        "upload" to true,
     )
 
     private fun loadPerms(pkg: String): MutableMap<String, Boolean> {
@@ -1083,7 +1215,7 @@ class MainActivity : AppCompatActivity() {
         val raw = pref.getString(pkg, null) ?: return defaultPerms()
         return try {
             val j = JSONObject(raw)
-            mutableMapOf(
+            val sanitized = mutableMapOf(
                 "local" to j.optBoolean("local", true),
                 "wifi" to j.optBoolean("wifi", true),
                 "cellular" to j.optBoolean("cellular", true),
@@ -1091,9 +1223,11 @@ class MainActivity : AppCompatActivity() {
                 "vpn" to j.optBoolean("vpn", true),
                 "bluetooth_tethering" to j.optBoolean("bluetooth_tethering", false),
                 "tor" to j.optBoolean("tor", false),
-                "download" to j.optBoolean("download", true),
-                "upload" to j.optBoolean("upload", true),
             )
+            if (j.has("download") || j.has("upload")) {
+                pref.edit().putString(pkg, serializePerms(sanitized).toString()).apply()
+            }
+            sanitized
         } catch (_: Exception) {
             defaultPerms()
         }
@@ -1101,16 +1235,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun saveAppPerm(item: AppRuleEntry) {
         val pref = getSharedPreferences(profileScopedRulesPref(), MODE_PRIVATE)
-        val j = JSONObject()
-            .put("local", item.perms["local"] == true)
-            .put("wifi", item.perms["wifi"] == true)
-            .put("cellular", item.perms["cellular"] == true)
-            .put("roaming", item.perms["roaming"] == true)
-            .put("vpn", item.perms["vpn"] == true)
-            .put("bluetooth_tethering", item.perms["bluetooth_tethering"] == true)
-            .put("tor", item.perms["tor"] == true)
-            .put("download", item.perms["download"] == true)
-            .put("upload", item.perms["upload"] == true)
+        val j = serializePerms(item.perms)
         pref.edit().putString(item.packageName, j.toString()).apply()
     }
 
@@ -1118,19 +1243,21 @@ class MainActivity : AppCompatActivity() {
         val pref = getSharedPreferences(profileScopedRulesPref(targetProfile), MODE_PRIVATE)
         val editor = pref.edit()
         allApps.forEach { item ->
-            val j = JSONObject()
-                .put("local", item.perms["local"] == true)
-                .put("wifi", item.perms["wifi"] == true)
-                .put("cellular", item.perms["cellular"] == true)
-                .put("roaming", item.perms["roaming"] == true)
-                .put("vpn", item.perms["vpn"] == true)
-                .put("bluetooth_tethering", item.perms["bluetooth_tethering"] == true)
-                .put("tor", item.perms["tor"] == true)
-                .put("download", item.perms["download"] == true)
-                .put("upload", item.perms["upload"] == true)
+            val j = serializePerms(item.perms)
             editor.putString(item.packageName, j.toString())
         }
         editor.apply()
+    }
+
+    private fun serializePerms(perms: Map<String, Boolean>): JSONObject {
+        return JSONObject()
+            .put("local", perms["local"] == true)
+            .put("wifi", perms["wifi"] == true)
+            .put("cellular", perms["cellular"] == true)
+            .put("roaming", perms["roaming"] == true)
+            .put("vpn", perms["vpn"] == true)
+            .put("bluetooth_tethering", perms["bluetooth_tethering"] == true)
+            .put("tor", perms["tor"] == true)
     }
 
     private fun openSortMenu() {
@@ -1175,15 +1302,11 @@ class MainActivity : AppCompatActivity() {
         val toggleLabel = if (currentFirewallEnabled) "Disable Firewall Agent" else "Enable Firewall Agent"
         menu.menu.add(Menu.NONE, 1, 1, toggleLabel)
         menu.menu.add(Menu.NONE, 3, 3, "Apply")
-        menu.menu.add(Menu.NONE, 14, 14, "Check all (visible)")
-        menu.menu.add(Menu.NONE, 15, 15, "Uncheck all (visible)")
-        menu.menu.add(Menu.NONE, 16, 16, "Restore check")
-        menu.menu.add(Menu.NONE, 4, 4, "View Log")
         menu.menu.add(Menu.NONE, 5, 5, "ML Alerts")
         menu.menu.add(Menu.NONE, 6, 6, "Rules")
-        menu.menu.add(Menu.NONE, 7, 7, "Preferences")
-        menu.menu.add(Menu.NONE, 8, 8, "Model Update URL")
+        menu.menu.add(Menu.NONE, 7, 7, "Settings")
         menu.menu.add(Menu.NONE, 10, 10, "Traffic Monitor")
+        menu.menu.add(Menu.NONE, 19, 19, "RAM Optimizer")
         menu.menu.add(Menu.NONE, 11, 11, "Call Guard")
         menu.menu.add(Menu.NONE, 12, 12, "AdGuard DNS")
         menu.menu.add(Menu.NONE, 13, 13, "Tor Connection")
@@ -1197,7 +1320,16 @@ class MainActivity : AppCompatActivity() {
         return when (item.itemId) {
             1 -> {
                 if (currentFirewallEnabled) {
-                    runAction("Disable Firewall", 104) { RootFirewallController.disable() }
+                    AlertDialog.Builder(this)
+                        .setTitle("⚠️ Matikan Firewall?")
+                        .setMessage("Apakah Anda yakin ingin mematikan firewall? Perangkat Anda akan rentan terhadap serangan Evil Twin, malware, dan situs perjudian.")
+                        .setPositiveButton("Ya, Matikan") { _, _ ->
+                            runAction("Disable Firewall", 104) { RootFirewallController.disable() }
+                        }
+                        .setNegativeButton("Batal") { dialog, _ ->
+                            dialog.dismiss()
+                        }
+                        .show()
                 } else {
                     runAction("Enable Firewall", 103) {
                         val enableResult = RootFirewallController.enable()
@@ -1209,15 +1341,11 @@ class MainActivity : AppCompatActivity() {
                 true
             }
             3 -> { promptProfileForApply(); true }
-            14 -> { bulkSetChecks(true); true }
-            15 -> { bulkSetChecks(false); true }
-            16 -> { restoreBulkChecks(); true }
-            4 -> { startActivity(Intent(this, LogActivity::class.java)); true }
             5 -> { startActivity(Intent(this, AlertsActivity::class.java)); true }
             6 -> { startActivity(Intent(this, RulesActivity::class.java)); true }
             7 -> { startActivity(Intent(this, PreferencesActivity::class.java)); true }
-            8 -> { startActivity(Intent(this, ModelUpdateActivity::class.java)); true }
             10 -> { startActivity(Intent(this, TrafficMonitorActivity::class.java)); true }
+            19 -> { startActivity(Intent(this, RamOptimizerActivity::class.java)); true }
             11 -> { startActivity(Intent(this, CallGuardDialerActivity::class.java)); true }
             12 -> { startActivity(Intent(this, AdGuardActivity::class.java)); true }
             13 -> { openTorEntry(); true }
@@ -1233,7 +1361,6 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "Tidak ada aplikasi pada list saat ini.", Toast.LENGTH_SHORT).show()
             return
         }
-        saveBulkSnapshot(targets)
         val keys = listOf(
             "local",
             "wifi",
@@ -1242,8 +1369,6 @@ class MainActivity : AppCompatActivity() {
             "vpn",
             "bluetooth_tethering",
             "tor",
-            "download",
-            "upload",
         )
         targets.forEach { item ->
             keys.forEach { key -> item.perms[key] = checked }
@@ -1266,8 +1391,6 @@ class MainActivity : AppCompatActivity() {
                 .put("vpn", item.perms["vpn"] == true)
                 .put("bluetooth_tethering", item.perms["bluetooth_tethering"] == true)
                 .put("tor", item.perms["tor"] == true)
-                .put("download", item.perms["download"] == true)
-                .put("upload", item.perms["upload"] == true)
             root.put(item.packageName, p)
         }
         getSharedPreferences(bulkPrefsName, MODE_PRIVATE)
@@ -1277,35 +1400,114 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun restoreBulkChecks() {
-        val raw = getSharedPreferences(bulkPrefsName, MODE_PRIVATE)
-            .getString(bulkSnapshotKey, null)
-        if (raw.isNullOrBlank()) {
-            Toast.makeText(this, "Snapshot restore tidak ditemukan.", Toast.LENGTH_SHORT).show()
+        lifecycleScope.launch {
+            val loading = LoadingDialogController(this@MainActivity)
+            customLoadingActive = true
+            dismissBackendBusyDialog()
+            loading.showProgress(
+                title = "Restore Rules",
+                processed = 5,
+                total = 100,
+                phase = "Memvalidasi akses root...",
+            )
+            setBusy(true)
+            try {
+                val rooted = withContext(Dispatchers.IO) { RootFirewallController.checkRoot() }
+                if (!rooted) {
+                    loading.dismissProgress()
+                    Toast.makeText(this@MainActivity, "Root tidak tersedia untuk restore dari iptables.", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+                loading.updateProgress(
+                    title = "Restore Rules",
+                    processed = 35,
+                    total = 100,
+                    phase = "Membaca baseline iptables...",
+                )
+
+                val specByUid = withContext(Dispatchers.IO) {
+                    val managed = RootFirewallController.listManagedUids()
+                    RootFirewallController.readUidChainSpecs(managed)
+                }
+                loading.updateProgress(
+                    title = "Restore Rules",
+                    processed = 70,
+                    total = 100,
+                    phase = "Menyinkronkan checkbox UI...",
+                )
+
+                var restored = 0
+                allApps.forEach { item ->
+                    val spec = specByUid[item.uid]
+                    applyPermsFromIptablesSpec(item, spec)
+                    saveAppPerm(item)
+                    restored++
+                }
+
+                adapter.notifyDataSetChanged()
+                loading.updateProgress(
+                    title = "Restore Rules",
+                    processed = 100,
+                    total = 100,
+                    phase = "Finalisasi...",
+                )
+                loading.dismissProgress()
+                loading.showSuccess(
+                    title = "Restore Selesai",
+                    message = "Rules UI sudah sinkron dengan baseline iptables.",
+                )
+                Toast.makeText(
+                    this@MainActivity,
+                    "Restore check dari iptables berhasil: $restored aplikasi.",
+                    Toast.LENGTH_SHORT,
+                ).show()
+                showOutput("Restore check sinkron dari iptables selesai: $restored aplikasi.")
+            } finally {
+                setBusy(false)
+                customLoadingActive = false
+                loading.dismissProgress()
+            }
+        }
+    }
+
+    private fun applyPermsFromIptablesSpec(item: AppRuleEntry, specRaw: String?) {
+        val spec = specRaw.orEmpty()
+        // Jika chain UID tidak ada di FA_APP, berarti UID tidak dibatasi => all allow.
+        if (spec.isBlank()) {
+            item.perms["local"] = true
+            item.perms["wifi"] = true
+            item.perms["cellular"] = true
+            item.perms["roaming"] = true
+            item.perms["vpn"] = true
+            item.perms["bluetooth_tethering"] = true
+            item.perms["tor"] = true
             return
         }
-        val obj = runCatching { JSONObject(raw) }.getOrNull()
-        if (obj == null) {
-            Toast.makeText(this, "Snapshot restore rusak.", Toast.LENGTH_SHORT).show()
-            return
-        }
-        var restored = 0
-        allApps.forEach { item ->
-            val p = obj.optJSONObject(item.packageName) ?: return@forEach
-            item.perms["local"] = p.optBoolean("local", item.perms["local"] == true)
-            item.perms["wifi"] = p.optBoolean("wifi", item.perms["wifi"] == true)
-            item.perms["cellular"] = p.optBoolean("cellular", item.perms["cellular"] == true)
-            item.perms["roaming"] = p.optBoolean("roaming", item.perms["roaming"] == true)
-            item.perms["vpn"] = p.optBoolean("vpn", item.perms["vpn"] == true)
-            item.perms["bluetooth_tethering"] = p.optBoolean("bluetooth_tethering", item.perms["bluetooth_tethering"] == true)
-            item.perms["tor"] = p.optBoolean("tor", item.perms["tor"] == true)
-            item.perms["download"] = p.optBoolean("download", item.perms["download"] == true)
-            item.perms["upload"] = p.optBoolean("upload", item.perms["upload"] == true)
-            saveAppPerm(item)
-            restored++
-        }
-        adapter.notifyDataSetChanged()
-        Toast.makeText(this, "Restore check berhasil: $restored aplikasi.", Toast.LENGTH_SHORT).show()
-        showOutput("Restore check selesai: $restored aplikasi.")
+
+        val local = spec.contains("-o lo -j RETURN") || spec.contains("-d 127.0.0.0/8 -j RETURN")
+        val wifi = spec.contains("-o wlan+ -j RETURN")
+        val cellular =
+            spec.contains("-o rmnet+ -j RETURN") ||
+                spec.contains("-o ccmni+ -j RETURN") ||
+                spec.contains("-o pdp+ -j RETURN") ||
+                spec.contains("-o clat+ -j RETURN")
+        val vpn =
+            spec.contains("-o tun+ -j RETURN") ||
+                spec.contains("-o ppp+ -j RETURN") ||
+                spec.contains("-o wg+ -j RETURN")
+        val bluetooth = spec.contains("-o bnep+ -j RETURN")
+        val tor =
+            spec.contains("--dport 9040 -j RETURN") ||
+                spec.contains("--dport 9050 -j RETURN")
+
+        item.perms["local"] = local
+        item.perms["wifi"] = wifi
+        item.perms["cellular"] = cellular
+        // Pada layer iptables, roaming mengikuti interface seluler.
+        item.perms["roaming"] = cellular
+        item.perms["vpn"] = vpn
+        item.perms["bluetooth_tethering"] = bluetooth
+        item.perms["tor"] = tor
     }
 
     private fun promptProfileForApply() {
@@ -1687,8 +1889,6 @@ class MainActivity : AppCompatActivity() {
                     vpn = it.perms["vpn"] == true,
                     bluetooth = it.perms["bluetooth_tethering"] == true,
                     tor = it.perms["tor"] == true,
-                    download = it.perms["download"] == true,
-                    upload = it.perms["upload"] == true,
                 )
             }
             .distinctBy { it.uid }
@@ -1710,8 +1910,6 @@ class MainActivity : AppCompatActivity() {
                     vpn = it.perms["vpn"] == true,
                     bluetooth = it.perms["bluetooth_tethering"] == true,
                     tor = it.perms["tor"] == true,
-                    download = it.perms["download"] == true,
-                    upload = it.perms["upload"] == true,
                 )
             }
             .distinctBy { it.uid }
@@ -1759,17 +1957,14 @@ class MainActivity : AppCompatActivity() {
         val allowVpn = rule.vpn
         val allowBt = rule.bluetooth
         val allowTor = rule.tor
-        val allowDownload = rule.download
-        val allowUpload = rule.upload
         val anyNetworkPathAllowed = allowWifi || allowCell || allowRoam || allowVpn || allowBt || allowTor
-        val anyDirectionAllowed = allowDownload || allowUpload
 
         return if (checkboxMode == "allow") {
-            // In allow mode, app is blocked if no internet path or direction is allowed.
-            !anyNetworkPathAllowed || !anyDirectionAllowed
+            // In allow mode, app is blocked if no internet path is allowed.
+            !anyNetworkPathAllowed
         } else {
             // In blocked mode, any blocked internet path implies block (global per-UID backend).
-            anyNetworkPathAllowed || anyDirectionAllowed
+            anyNetworkPathAllowed
         }
     }
 
@@ -1780,9 +1975,7 @@ class MainActivity : AppCompatActivity() {
             (rule.roaming || rule.cellular) &&
             rule.vpn &&
             rule.bluetooth &&
-            rule.tor &&
-            rule.download &&
-            rule.upload
+            rule.tor
     }
 
     private fun ruleSignature(rule: AppNetRule): String {
@@ -1795,8 +1988,6 @@ class MainActivity : AppCompatActivity() {
             if (rule.vpn) 1 else 0,
             if (rule.bluetooth) 1 else 0,
             if (rule.tor) 1 else 0,
-            if (rule.download) 1 else 0,
-            if (rule.upload) 1 else 0,
         ).joinToString(":")
     }
 
@@ -1830,13 +2021,6 @@ class MainActivity : AppCompatActivity() {
             rootAvailable = rootedNow
             if (!rootedNow) {
                 updateStatusFab(false, false)
-                NotifyHelper.syncPersistentStatus(
-                    this@MainActivity,
-                    enabled = false,
-                    mode = currentMode,
-                    service = currentServiceState,
-                    ml = currentMlState,
-                )
                 showOutput("Root belum aktif. Grant akses root di Magisk/KSU.")
                 return@launch
             }
@@ -1947,13 +2131,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun syncPersistentNotification() {
-        NotifyHelper.syncPersistentStatus(
-            this,
-            enabled = rootAvailable && currentFirewallEnabled,
-            mode = currentMode,
-            service = currentServiceState,
-            ml = currentMlState,
-        )
+        // Single source of truth for persistent status notification is FirewallKeepAliveService.
+        // Avoid posting/updating 9001 from Activity to prevent ROM-specific notification churn.
     }
 
     private fun updateCellularRuleIcon() {
@@ -1995,9 +2174,134 @@ class MainActivity : AppCompatActivity() {
     private fun showOutput(text: String) {
         binding.outputText.visibility = View.VISIBLE
         binding.outputText.text = text
+        val stamp = Instant.now().toString()
+        AppConfigStore.appendRuleAction(applicationContext, "[$stamp] app: $text")
     }
 
-    private fun requestAppsReload(reason: String, immediate: Boolean = false) {
+    private fun preloadAppsFromUserData() {
+        val cached = AppMetaCacheStore.read(applicationContext)
+        if (cached.isNotEmpty()) {
+            allApps = cached.map { row ->
+                AppRuleEntry(
+                    packageName = row.packageName,
+                    appName = row.appName,
+                    uid = row.uid,
+                    type = row.type,
+                    installTime = row.installTime,
+                    icon = AppIconCacheStore.load(applicationContext, row.packageName),
+                    perms = loadPerms(row.packageName),
+                )
+            }
+            refreshList()
+            showOutput("Apps user-data loaded: ${allApps.size}")
+            return
+        }
+        val inventoryRows = loadRowsFromInventoryStore()
+        if (inventoryRows.isNotEmpty()) {
+            allApps = inventoryRows
+            refreshList()
+            showOutput("Apps user-inventory loaded: ${allApps.size}")
+        }
+    }
+
+    private fun loadRowsFromInventoryStore(): List<AppRuleEntry> {
+        val inventory = AppInventoryStore.read(applicationContext)
+        if (inventory.isEmpty()) return emptyList()
+        return inventory.entries
+            .asSequence()
+            .filter { it.key.isNotBlank() && it.value > 0 }
+            .map { (pkg, uid) ->
+                val type = if (uid < 10000) "core" else "user"
+                AppRuleEntry(
+                    packageName = pkg,
+                    appName = pkg,
+                    uid = uid,
+                    type = type,
+                    installTime = 0L,
+                    icon = AppIconCacheStore.load(applicationContext, pkg),
+                    perms = loadPerms(pkg),
+                )
+            }
+            .sortedBy { it.appName.lowercase() }
+            .toList()
+    }
+
+    private fun refreshAppsFromFab() {
+        lifecycleScope.launch {
+            val loading = LoadingDialogController(this@MainActivity)
+            customLoadingActive = true
+            dismissBackendBusyDialog()
+            loading.showProgress(
+                title = "Refresh App List",
+                processed = 8,
+                total = 100,
+                phase = "Menyiapkan sinkronisasi manual...",
+            )
+            setBusy(true)
+            try {
+                loading.updateProgress(
+                    title = "Refresh App List",
+                    processed = 38,
+                    total = 100,
+                    phase = "Memuat ulang daftar aplikasi...",
+                )
+                loadInstalledApps(forceFullRefresh = true, cacheOnlyIfAvailable = false)
+                loading.updateProgress(
+                    title = "Refresh App List",
+                    processed = 78,
+                    total = 100,
+                    phase = "Sinkronisasi inventory backend...",
+                )
+                syncFromInventory("manual_fab_refresh")
+                loading.updateProgress(
+                    title = "Refresh App List",
+                    processed = 100,
+                    total = 100,
+                    phase = "Finalisasi...",
+                )
+                loading.dismissProgress()
+                loading.showSuccess(
+                    title = "Refresh Selesai",
+                    message = "List aplikasi berhasil diperbarui.",
+                )
+            } finally {
+                setBusy(false)
+                customLoadingActive = false
+                loading.dismissProgress()
+            }
+        }
+    }
+
+    private fun isBootSessionInitialized(): Boolean {
+        if (bootSessionInitialized) return true
+        val prefs = getSharedPreferences(startupStatePrefsName, MODE_PRIVATE)
+        val savedBootId = prefs.getString(startupBootIdKey, "").orEmpty()
+        val savedInit = prefs.getBoolean(startupInitDoneKey, false)
+        val currentBootId = readBootId()
+        val initialized = savedInit && savedBootId.isNotBlank() && savedBootId == currentBootId
+        if (initialized) bootSessionInitialized = true
+        return initialized
+    }
+
+    private fun markBootSessionInitialized() {
+        bootSessionInitialized = true
+        val currentBootId = readBootId()
+        getSharedPreferences(startupStatePrefsName, MODE_PRIVATE)
+            .edit()
+            .putString(startupBootIdKey, currentBootId)
+            .putBoolean(startupInitDoneKey, true)
+            .apply()
+    }
+
+    private fun readBootId(): String {
+        return runCatching {
+            java.io.File("/proc/sys/kernel/random/boot_id")
+                .readText()
+                .trim()
+        }.getOrDefault("")
+    }
+
+    private fun requestAppsReload(reason: String, immediate: Boolean = false, forceFullRefresh: Boolean = false) {
         if (appsLoadInProgress) {
             pendingAppsReload = true
             return
@@ -2006,14 +2310,13 @@ class MainActivity : AppCompatActivity() {
         appsReloadJob = lifecycleScope.launch {
             if (!immediate) kotlinx.coroutines.delay(250)
             Log.i(tag, "reload apps reason=$reason")
-            loadInstalledApps()
+            loadInstalledApps(forceFullRefresh = forceFullRefresh)
         }
     }
 
     private fun handleLaunchIntent(intent: Intent?) {
         val focusPkg = intent?.getStringExtra("focus_package")?.trim().orEmpty()
         if (focusPkg.isBlank()) return
-        closeSystemDialogs()
         setSearchMode(true)
         binding.searchTopInput.setText(focusPkg)
         searchQuery = focusPkg
@@ -2025,10 +2328,6 @@ class MainActivity : AppCompatActivity() {
             refreshList()
         }
         showOutput("Aplikasi baru terdeteksi: $focusPkg. Atur rules lalu Apply.")
-    }
-
-    private fun closeSystemDialogs() {
-        runCatching { sendBroadcast(Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS)) }
     }
 
     private suspend fun upsertSinglePackageInMemory(pkg: String, uidHint: Int = -1) {

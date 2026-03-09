@@ -13,7 +13,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
-class EvilTwinReceiver : BroadcastReceiver() {
+class EvilTwinReceiver(private val serviceCallback: EvilTwinDetectionService? = null) : BroadcastReceiver() {
     
     private val tag = "EvilTwinReceiver"
     private val receiverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -223,14 +223,18 @@ class EvilTwinReceiver : BroadcastReceiver() {
         
         // Update threat history
         threats.forEach { threat ->
-            val serviceIntent = Intent(context, EvilTwinDetectionService::class.java)
-            serviceIntent.action = "RECORD_THREAT"
-            serviceIntent.putExtra("BSSID", threat.bssid)
-            
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(serviceIntent)
+            if (serviceCallback != null) {
+                serviceCallback.recordThreat(threat.bssid)
             } else {
-                context.startService(serviceIntent)
+                val serviceIntent = Intent(context, EvilTwinDetectionService::class.java)
+                serviceIntent.action = "RECORD_THREAT"
+                serviceIntent.putExtra("BSSID", threat.bssid)
+                
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(serviceIntent)
+                } else {
+                    context.startService(serviceIntent)
+                }
             }
         }
     }
@@ -250,15 +254,19 @@ class EvilTwinReceiver : BroadcastReceiver() {
         
         Log.e(tag, "CRITICAL THREAT: $threatDetails")
         
-        // Send notification via service
-        val serviceIntent = Intent(context, EvilTwinDetectionService::class.java)
-        serviceIntent.action = "SEND_THREAT_NOTIFICATION"
-        serviceIntent.putExtra("THREAT_DETAILS", threatDetails)
-        
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(serviceIntent)
+        // Send notification directly or via service intent
+        if (serviceCallback != null) {
+            serviceCallback.sendThreatNotification(threatDetails)
         } else {
-            context.startService(serviceIntent)
+            val serviceIntent = Intent(context, EvilTwinDetectionService::class.java)
+            serviceIntent.action = "SEND_THREAT_NOTIFICATION"
+            serviceIntent.putExtra("THREAT_DETAILS", threatDetails)
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent)
+            } else {
+                context.startService(serviceIntent)
+            }
         }
     }
     
@@ -272,15 +280,21 @@ class EvilTwinReceiver : BroadcastReceiver() {
         
         Log.w(tag, "HIGH THREAT: $threatSummary")
         
-        // Update service notification
-        val serviceIntent = Intent(context, EvilTwinDetectionService::class.java)
-        serviceIntent.action = "UPDATE_NOTIFICATION"
-        serviceIntent.putExtra("NOTIFICATION_CONTENT", "High priority threats detected: ${threats.size} networks")
+        val notifContent = "High priority threats detected: ${threats.size} networks"
         
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(serviceIntent)
+        // Update service notification directly
+        if (serviceCallback != null) {
+            serviceCallback.updateNotification(notifContent)
         } else {
-            context.startService(serviceIntent)
+            val serviceIntent = Intent(context, EvilTwinDetectionService::class.java)
+            serviceIntent.action = "UPDATE_NOTIFICATION"
+            serviceIntent.putExtra("NOTIFICATION_CONTENT", notifContent)
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent)
+            } else {
+                context.startService(serviceIntent)
+            }
         }
     }
     

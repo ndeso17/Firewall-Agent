@@ -7,6 +7,7 @@ import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.callbacks.XC_LoadPackage
 import java.net.InetAddress
+import java.net.UnknownHostException
 import java.util.Locale
 
 /**
@@ -29,6 +30,24 @@ import java.util.Locale
  * since our stub jar only contains core API).
  */
 class DnsHideHook : IXposedHookLoadPackage {
+    private val strictFailClosedPackages = setOf(
+        "com.happymod.apk",
+        "com.happymod",
+        "com.freereels.app",
+        "com.worldance.drama",
+        "com.google.android.webview",
+        "com.android.webview",
+        "com.android.chrome",
+    )
+    private val enforcedDnsBlockPackages = setOf(
+        "com.happymod.apk",
+        "com.happymod",
+        "com.freereels.app",
+        "com.worldance.drama",
+        "com.google.android.webview",
+        "com.android.webview",
+        "com.android.chrome",
+    )
 
     // Ad SDK domains that must "resolve" to prevent apps from failing connectivity checks.
     // We return a loopback address so the TCP connection attempt simply sees no service,
@@ -83,6 +102,13 @@ class DnsHideHook : IXposedHookLoadPackage {
         "prebid.media.net",
         "ads.pubmatic.com",
     )
+    private val forcedBlockedHosts = setOf(
+        "66qifei.com",
+        "77rpfhk425.com",
+        "plx193.com",
+        "ppv99b.xyz",
+        "rejekibetasia02.com",
+    )
 
     // System packages to skip — never interfere with OS-level components
     private val systemPackagePrefixes = setOf(
@@ -108,8 +134,6 @@ class DnsHideHook : IXposedHookLoadPackage {
         try {
             hookInetAddressForAdDomains(lpparam)
         } catch (_: Throwable) {}
-
-        XposedBridge.log("FA.DnsHideHook init ok in $pkg")
     }
 
     /**
@@ -190,15 +214,30 @@ class DnsHideHook : IXposedHookLoadPackage {
 
         val loopbackAddr = InetAddress.getByName("127.0.0.1")
         val loopbackArray = arrayOf(loopbackAddr)
+        val failClosed = strictFailClosedPackages.contains(lpparam.packageName)
 
         XposedBridge.hookAllMethods(inetClass, "getAllByName", object : XC_MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 val host = param.args.firstOrNull() as? String ?: return
                 val hostLower = host.lowercase(Locale.US)
+                if (enforcedDnsBlockPackages.contains(lpparam.packageName) && shouldForceBlockHost(hostLower)) {
+                    if (failClosed) {
+                        param.throwable = UnknownHostException("blocked_by_firewall_agent:$host")
+                    } else {
+                        param.result = loopbackArray
+                    }
+                    XposedBridge.log("FA.DnsHideHook blocked InetAddress.getAllByName for $host in ${lpparam.packageName}")
+                    return
+                }
                 if (adSdkDomainsToFake.any { hostLower == it || hostLower.endsWith(".$it") }) {
-                    // Return loopback — prevents UnknownHostException without enabling real ad traffic
-                    param.result = loopbackArray
-                    XposedBridge.log("FA.DnsHideHook faked InetAddress.getAllByName for $host in ${lpparam.packageName}")
+                    if (failClosed) {
+                        param.throwable = UnknownHostException("blocked_by_firewall_agent:$host")
+                        XposedBridge.log("FA.DnsHideHook hard-blocked InetAddress.getAllByName for $host in ${lpparam.packageName}")
+                    } else {
+                        // Return loopback — prevents UnknownHostException without enabling real ad traffic
+                        param.result = loopbackArray
+                        XposedBridge.log("FA.DnsHideHook faked InetAddress.getAllByName for $host in ${lpparam.packageName}")
+                    }
                 }
             }
         })
@@ -208,12 +247,35 @@ class DnsHideHook : IXposedHookLoadPackage {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 val host = param.args.firstOrNull() as? String ?: return
                 val hostLower = host.lowercase(Locale.US)
+                if (enforcedDnsBlockPackages.contains(lpparam.packageName) && shouldForceBlockHost(hostLower)) {
+                    if (failClosed) {
+                        param.throwable = UnknownHostException("blocked_by_firewall_agent:$host")
+                    } else {
+                        param.result = loopbackAddr
+                    }
+                    XposedBridge.log("FA.DnsHideHook blocked InetAddress.getByName for $host in ${lpparam.packageName}")
+                    return
+                }
                 if (adSdkDomainsToFake.any { hostLower == it || hostLower.endsWith(".$it") }) {
-                    param.result = loopbackAddr
-                    XposedBridge.log("FA.DnsHideHook faked InetAddress.getByName for $host in ${lpparam.packageName}")
+                    if (failClosed) {
+                        param.throwable = UnknownHostException("blocked_by_firewall_agent:$host")
+                        XposedBridge.log("FA.DnsHideHook hard-blocked InetAddress.getByName for $host in ${lpparam.packageName}")
+                    } else {
+                        param.result = loopbackAddr
+                        XposedBridge.log("FA.DnsHideHook faked InetAddress.getByName for $host in ${lpparam.packageName}")
+                    }
                 }
             }
         })
+    }
+
+    private fun shouldForceBlockHost(hostLower: String): Boolean {
+        if (hostLower.isBlank()) return false
+        if (forcedBlockedHosts.any { hostLower == it || hostLower.endsWith(".$it") }) return true
+        if (Regex("""(^|[.])\d{2,4}rp[a-z0-9-]*[.]""").containsMatchIn(hostLower)) return true
+        val signal = hostLower.lowercase(Locale.US)
+        val riskKeywords = listOf("judi", "casino", "bet", "slot", "porn", "adult", "bokep")
+        return riskKeywords.any { signal.contains(it) }
     }
 
     /**

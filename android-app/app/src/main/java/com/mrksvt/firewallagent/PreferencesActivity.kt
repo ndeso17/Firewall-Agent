@@ -1,6 +1,7 @@
 package com.mrksvt.firewallagent
 
 import android.os.Bundle
+import android.content.Intent
 import android.widget.ArrayAdapter
 import android.widget.Spinner
 import androidx.appcompat.app.AppCompatActivity
@@ -21,6 +22,9 @@ class PreferencesActivity : AppCompatActivity() {
 
         binding.reloadBtn.setOnClickListener { loadPrefs() }
         binding.saveBtn.setOnClickListener { savePrefs() }
+        binding.modelUpdateBtn.setOnClickListener {
+            startActivity(Intent(this, ModelUpdateActivity::class.java))
+        }
         loadPrefs()
     }
 
@@ -70,7 +74,7 @@ class PreferencesActivity : AppCompatActivity() {
             val mode = value.optString("mode", "audit")
             val result = withContext(Dispatchers.IO) { RootFirewallController.setMode(mode) }
             binding.outputText.text = buildString {
-                appendLine("Preferences saved.")
+                appendLine("Settings saved.")
                 appendLine("Mode sync: exit=${result.code}")
                 if (result.stdout.isNotBlank()) appendLine(result.stdout)
                 if (result.stderr.isNotBlank()) appendLine(result.stderr)

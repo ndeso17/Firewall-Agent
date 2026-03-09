@@ -59,8 +59,6 @@ class PackageAddedReceiver : BroadcastReceiver() {
             .put("vpn", false)
             .put("bluetooth_tethering", false)
             .put("tor", false)
-            .put("download", false)
-            .put("upload", false)
             .toString()
 
         profiles.forEach { profile ->
@@ -123,8 +121,6 @@ class PackageAddedReceiver : BroadcastReceiver() {
             vpn = false,
             bluetooth = false,
             tor = false,
-            download = false,
-            upload = false,
         )
         val (res, _) = RootFirewallController.applyAppRulesIncremental(
             upsertRules = listOf(denyRule),

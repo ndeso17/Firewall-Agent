@@ -64,8 +64,6 @@ class AppRulesAdapter(
             bindCheck("vpn", binding.checkVpn)
             bindCheck("bluetooth_tethering", binding.checkBt)
             bindCheck("tor", binding.checkTor)
-            bindCheck("download", binding.checkDownload)
-            bindCheck("upload", binding.checkUpload)
         }
     }
 }

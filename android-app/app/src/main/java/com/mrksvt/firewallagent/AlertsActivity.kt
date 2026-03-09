@@ -11,6 +11,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.mrksvt.firewallagent.databinding.ActivityAlertsBinding
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -30,8 +32,15 @@ class AlertsActivity : AppCompatActivity() {
 
     private fun loadAlerts() {
         lifecycleScope.launch {
-            val log = withContext(Dispatchers.IO) { RootFirewallController.tailServiceLog(500).stdout }
-            allAlerts = parseAlerts(log)
+            val data = withContext(Dispatchers.IO) {
+                coroutineScope {
+                    val runnerDef = async { RootFirewallController.tailServiceLog(500).stdout }
+                    val netDef = async { LogSnapshotCache.getHybridNetEvents(applicationContext, maxLines = 50000) }
+                    val actionDef = async { AppConfigStore.loadRuleActions(applicationContext) }
+                    Triple(runnerDef.await(), netDef.await(), actionDef.await())
+                }
+            }
+            allAlerts = parseAlerts(data.first, data.second, data.third)
             renderAlerts()
         }
     }
@@ -119,9 +128,9 @@ class AlertsActivity : AppCompatActivity() {
         }
     }
 
-    private fun parseAlerts(log: String): List<AlertItem> {
+    private fun parseAlerts(log: String, netLog: String, actionLog: String): List<AlertItem> {
         val lines = log.lines().filter { it.contains("[runner]") }.takeLast(120).reversed()
-        return lines.mapIndexed { idx, line ->
+        val runnerAlerts = lines.mapIndexed { idx, line ->
             val mode = extract(line, "mode=([^ ]+)") ?: "audit"
             val uid = extract(line, "uid=([^ ]+)") ?: "-"
             val score = extract(line, "score=([^ ]+)") ?: "0"
@@ -147,6 +156,92 @@ class AlertsActivity : AppCompatActivity() {
                 description = "Aktivitas jaringan mencurigakan, potensi malware/spyware/trojan.",
             )
         }
+        val trafficAlerts = parseTrafficAnomalyAlerts(netLog)
+        val bgAlerts = parseBackgroundResourceAlerts(actionLog)
+        return (bgAlerts + trafficAlerts + runnerAlerts)
+            .distinctBy { "${it.incidentId}|${it.uid}|${it.reason}" }
+            .take(400)
+    }
+
+    private fun parseBackgroundResourceAlerts(actionLog: String): List<AlertItem> {
+        if (actionLog.isBlank()) return emptyList()
+        val lines = actionLog.lines()
+            .filter { it.contains("sec-bg-anomaly") }
+            .takeLast(200)
+            .reversed()
+        return lines.mapIndexedNotNull { idx, line ->
+            val pkg = extract(line, "pkg=([^ ]+)") ?: return@mapIndexedNotNull null
+            val type = extract(line, "type=([^ ]+)") ?: "sensitive-resource"
+            val uid = resolveUidForPackage(pkg)?.toString() ?: "-"
+            val incidentId = "bg_${System.currentTimeMillis()}_$idx"
+            AlertItem(
+                incidentId = incidentId,
+                mode = "ml-bg-resource",
+                uid = uid,
+                score = "0.85",
+                reason = "bg-sensitive-resource-$type",
+                decision = "alert_only",
+                plannedAction = "review_and_block_if_needed",
+                category = "Background Resource Anomaly",
+                description = "pkg=$pkg type=$type source=appops(background)",
+            )
+        }
+    }
+
+    private fun parseTrafficAnomalyAlerts(netLog: String): List<AlertItem> {
+        if (netLog.isBlank()) return emptyList()
+        val lines = netLog.lines()
+            .filter { it.contains("FA.HybridAdHook net event ") }
+            .takeLast(600)
+            .reversed()
+
+        val riskyReasons = setOf(
+            "ml-anomaly-host",
+            "ml-score-threshold",
+            "external-blacklist-feed",
+            "strict-malware-download",
+            "browser-malware-download",
+        )
+
+        return lines.mapIndexedNotNull { idx, line ->
+            val status = extractKey(line, "status").lowercase()
+            val reason = extractKey(line, "reason").lowercase()
+            if (status != "blocked") return@mapIndexedNotNull null
+            if (reason.isBlank() || (reason !in riskyReasons && !reason.startsWith("ml-"))) return@mapIndexedNotNull null
+
+            val policyPkg = extractKey(line, "policy_pkg")
+            val pkg = if (policyPkg.isNotBlank()) policyPkg else extractKey(line, "pkg")
+            val uid = resolveUidForPackage(pkg)?.toString() ?: "-"
+            val host = extractKey(line, "host").ifBlank { "-" }
+            val method = extractKey(line, "method").ifBlank { "UNKNOWN" }
+            val request = extractKey(line, "request").ifBlank { "download" }
+            val score = if (reason == "ml-score-threshold") "0.90" else "0.80"
+            val incidentId = "traffic_${System.currentTimeMillis()}_$idx"
+
+            AlertItem(
+                incidentId = incidentId,
+                mode = "ml-traffic",
+                uid = uid,
+                score = score,
+                reason = reason,
+                decision = "block_host",
+                plannedAction = "keep_blocked",
+                category = "Traffic Anomaly",
+                description = "Host=$host | Request=$request | Method=$method | pkg=$pkg",
+            )
+        }
+    }
+
+    private fun resolveUidForPackage(pkg: String): Int? {
+        if (pkg.isBlank() || pkg == "-") return null
+        return runCatching {
+            val ai = packageManager.getApplicationInfo(pkg, 0)
+            ai.uid
+        }.getOrNull()
+    }
+
+    private fun extractKey(line: String, key: String): String {
+        return Regex("""\b$key=([^ ]+)""").find(line)?.groupValues?.getOrNull(1)?.trim().orEmpty()
     }
 
     private fun extract(text: String, pattern: String): String? {

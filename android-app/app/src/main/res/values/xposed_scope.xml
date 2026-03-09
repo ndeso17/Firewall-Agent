@@ -3,5 +3,10 @@
     <string-array name="xposed_scope">
         <item>com.freereels.app</item>
         <item>com.worldance.drama</item>
+        <item>com.happymod.apk</item>
+        <item>com.happymod</item>
+        <item>com.google.android.webview</item>
+        <item>com.android.webview</item>
+        <item>com.android.chrome</item>
     </string-array>
 </resources>
