@@ -20,6 +20,7 @@ class TrafficMonitorActivity : AppCompatActivity() {
     private enum class Source { WIFI, CELLULAR, VPN, LAN, TOR }
 
     private lateinit var binding: ActivityTrafficMonitorBinding
+    private lateinit var loadingDialog: LoadingDialogController
     private var monitorJob: Job? = null
     private val uidNameCache = linkedMapOf<Int, String>()
     private val uidPkgCache = linkedMapOf<Int, String>()
@@ -28,11 +29,13 @@ class TrafficMonitorActivity : AppCompatActivity() {
     private var lastSample: TotalsSample? = null
     private var selectedSource: Source = Source.WIFI
     private lateinit var usageAdapter: TrafficAppUsageAdapter
+    private var firstLoadCompleted = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityTrafficMonitorBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        loadingDialog = LoadingDialogController(this)
         usageAdapter = TrafficAppUsageAdapter(
             onDownloadClick = { item -> openFlowLog(item, "download") },
             onUploadClick = { item -> openFlowLog(item, "upload") },
@@ -40,7 +43,7 @@ class TrafficMonitorActivity : AppCompatActivity() {
         binding.perAppRecycler.layoutManager = LinearLayoutManager(this)
         binding.perAppRecycler.adapter = usageAdapter
         setupSourceSpinner()
-        binding.refreshBtn.setOnClickListener { refreshOnce() }
+        binding.refreshBtn.setOnClickListener { refreshOnce(manual = true) }
     }
 
     override fun onStart() {
@@ -58,33 +61,63 @@ class TrafficMonitorActivity : AppCompatActivity() {
         monitorJob?.cancel()
         monitorJob = lifecycleScope.launch {
             while (isActive) {
-                refreshOnce()
+                refreshOnceInternal(showLoading = !firstLoadCompleted)
                 delay(1200)
             }
         }
     }
 
-    private fun refreshOnce() {
+    private fun refreshOnce(manual: Boolean = false) {
         lifecycleScope.launch {
-            val sample = withContext(Dispatchers.IO) { readTotalsSample() }
-            val perUid = withContext(Dispatchers.IO) { readTopUidUsage() }
-            val totals = formatTotals(sample, selectedSource)
-            binding.totalText.text = totals
-            usageAdapter.submitList(perUid)
-            binding.perAppEmpty.visibility = if (perUid.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
-            binding.trafficChart.setSourceLabel(sourceLabel(selectedSource))
-
-            val prev = lastSample
-            if (prev != null && sample.epochMs > prev.epochMs) {
-                val dt = ((sample.epochMs - prev.epochMs).coerceAtLeast(1L)).toFloat() / 1000f
-                val current = sourceBytes(sample, selectedSource)
-                val previous = sourceBytes(prev, selectedSource)
-                val rxKBps = (current.first - previous.first).toFloat() / dt / 1024f
-                val txKBps = (current.second - previous.second).toFloat() / dt / 1024f
-                binding.trafficChart.pushPoint(rxKBps, txKBps)
-            }
-            lastSample = sample
+            refreshOnceInternal(showLoading = manual || !firstLoadCompleted)
         }
+    }
+
+    private suspend fun refreshOnceInternal(showLoading: Boolean) {
+        if (showLoading) {
+            loadingDialog.showProgress(
+                title = "Traffic Monitor",
+                processed = 15,
+                total = 100,
+                phase = "Membaca statistik interface...",
+            )
+        }
+        val sample = withContext(Dispatchers.IO) { readTotalsSample() }
+        if (showLoading) {
+            loadingDialog.updateProgress(
+                title = "Traffic Monitor",
+                processed = 58,
+                total = 100,
+                phase = "Menyusun trafik per aplikasi...",
+            )
+        }
+        val perUid = withContext(Dispatchers.IO) { readTopUidUsage() }
+        val totals = formatTotals(sample, selectedSource)
+        binding.totalText.text = totals
+        usageAdapter.submitList(perUid)
+        binding.perAppEmpty.visibility = if (perUid.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
+        binding.trafficChart.setSourceLabel(sourceLabel(selectedSource))
+
+        val prev = lastSample
+        if (prev != null && sample.epochMs > prev.epochMs) {
+            val dt = ((sample.epochMs - prev.epochMs).coerceAtLeast(1L)).toFloat() / 1000f
+            val current = sourceBytes(sample, selectedSource)
+            val previous = sourceBytes(prev, selectedSource)
+            val rxKBps = (current.first - previous.first).toFloat() / dt / 1024f
+            val txKBps = (current.second - previous.second).toFloat() / dt / 1024f
+            binding.trafficChart.pushPoint(rxKBps, txKBps)
+        }
+        lastSample = sample
+        if (showLoading) {
+            loadingDialog.updateProgress(
+                title = "Traffic Monitor",
+                processed = 100,
+                total = 100,
+                phase = "Finalisasi...",
+            )
+            loadingDialog.dismissProgress()
+        }
+        firstLoadCompleted = true
     }
 
     private fun readTotalsSample(): TotalsSample {

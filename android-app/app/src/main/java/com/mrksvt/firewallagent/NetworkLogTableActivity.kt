@@ -290,7 +290,9 @@ class NetworkLogTableActivity : AppCompatActivity() {
             tr.addView(cell(row.pkg, false, 190))
             tr.addView(clickableCell(shortHost, false, 124, fullHost, "Host lengkap"))
             tr.addView(clickableCell(shortUrl, false, 124, fullUrl, "URL lengkap"))
-            tr.addView(cell(row.request, false, 104))
+            val fullRequest = row.request.ifBlank { "-" }
+            val shortRequest = shortenForTable(normalizeCompact(fullRequest), 15)
+            tr.addView(clickableCell(shortRequest, false, 104, fullRequest, "Request lengkap"))
             tr.addView(cell(row.method, false, 100))
             tr.addView(cell(shortType, false, 86))
             tr.addView(cell(human(row.sizeBytes), true, 94))

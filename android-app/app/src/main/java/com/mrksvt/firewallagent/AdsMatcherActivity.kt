@@ -17,6 +17,8 @@ import java.net.URI
 class AdsMatcherActivity : AppCompatActivity() {
     private lateinit var binding: ActivityAdsMatcherBinding
     private var latestMatcherCandidates: List<MatcherCandidate> = emptyList()
+    private var logOffset = 0
+    private var logTotalLines = -1
 
     private val adHostPatterns = listOf(
         "doubleclick.net",
@@ -53,11 +55,13 @@ class AdsMatcherActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         binding.backBtn.setOnClickListener { finish() }
-        binding.customPatternsSaveBtn.setOnClickListener { saveCustomMatchers() }
-        binding.customPatternsPreviewBtn.setOnClickListener { previewCustomMatchers() }
+        binding.customPatternsSaveBtn.setOnClickListener { markSelectedAsBlacklist() }
+        binding.customPatternsPreviewBtn.setOnClickListener { markSelectedAsWhitelist() }
         binding.customPatternsLoadLogBtn.setOnClickListener { loadMatcherCandidatesFromLogs() }
-        binding.customPatternsAddSelectedBtn.setOnClickListener { appendSelectedMatcherCandidates() }
+        binding.customPatternsAddSelectedBtn.setOnClickListener { clearSelectedFromLists() }
         binding.customPatternsAutoSelectBtn.setOnClickListener { autoSelectNewMatcherCandidates() }
+        binding.viewBlacklistBtn.setOnClickListener { renderCustomListItems(AdsMatcherStore.loadBlacklist(this).toList(), "Blacklist") }
+        binding.viewWhitelistBtn.setOnClickListener { renderCustomListItems(AdsMatcherStore.loadWhitelist(this).toList(), "Whitelist") }
 
         loadCustomMatchers()
         renderMatcherCandidates(emptyList())
@@ -83,29 +87,67 @@ class AdsMatcherActivity : AppCompatActivity() {
         )
         if (generated.isNotEmpty()) AdMlScorer.saveDynamicPatterns(this, generated)
         val persisted = AdMlScorer.loadDynamicPatterns(this)
-        val custom = AdMlScorer.loadUserPatterns(this)
+        val customBlacklist = AdsMatcherStore.loadBlacklist(this)
+        val customWhitelist = AdsMatcherStore.loadWhitelist(this)
         val external = BlacklistFeedSync.loadCached(this).toList()
-        return AdMlScorer.mergePatterns(
-            AdMlScorer.mergePatterns(AdMlScorer.mergePatterns(adHostPatterns, persisted), custom),
-            external,
+        return AdsMatcherStore.mergeBlockedPatterns(
+            base = adHostPatterns,
+            dynamic = persisted,
+            blacklist = customBlacklist,
+            external = external,
+            whitelist = customWhitelist,
         )
     }
 
     private fun loadCustomMatchers() {
-        val current = AdMlScorer.loadUserPatterns(this)
-        if (current.isNotEmpty()) binding.customPatternsInput.setText(current.joinToString("\n"))
-        renderCustomPatternStatus(current)
+        lifecycleScope.launch(Dispatchers.IO) {
+            val legacy = AdMlScorer.loadUserPatterns(this@AdsMatcherActivity)
+            val currentBlacklist = AdsMatcherStore.loadBlacklist(this@AdsMatcherActivity)
+            if (legacy.isNotEmpty() && currentBlacklist.isEmpty()) {
+                AdsMatcherStore.saveBlacklist(this@AdsMatcherActivity, legacy.toSet())
+            }
+            val blacklist = AdsMatcherStore.loadBlacklist(this@AdsMatcherActivity)
+            val whitelist = AdsMatcherStore.loadWhitelist(this@AdsMatcherActivity)
+            withContext(Dispatchers.Main) {
+                renderCustomPatternStatus(blacklist, whitelist)
+            }
+        }
     }
 
     private fun loadMatcherCandidatesFromLogs() {
+        if (logTotalLines >= 0 && logOffset >= logTotalLines) {
+            Toast.makeText(this, "Semua log telah dipindai ($logTotalLines baris).", Toast.LENGTH_SHORT).show()
+            return
+        }
         lifecycleScope.launch {
-            binding.outputText.text = "Memindai host kandidat dari log HybridAdHook..."
+            binding.outputText.text = "Memindai 100 log kandidat dari bawah (FIFO)... Offset: $logOffset"
             val candidates = withContext(Dispatchers.IO) {
-                val raw = RootFirewallController.runRaw(
-                    "grep -h -E 'FA.HybridAdHook|FA.DnsHideHook' /data/adb/lspd/log/modules_*.log 2>/dev/null | tail -n 40000",
-                )
-                val events = AdEventStore.mergeCurrentLog(this@AdsMatcherActivity, raw.stdout)
-                val existing = buildMergedAdPatterns().toSet()
+                if (logTotalLines < 0) {
+                    val rawWc = RootFirewallController.runRaw("cat /data/adb/lspd/log/modules_*.log 2>/dev/null | wc -l").stdout.trim()
+                    logTotalLines = rawWc.toIntOrNull() ?: 0
+                }
+                
+                if (logTotalLines <= 0 || logOffset >= logTotalLines) {
+                    return@withContext null
+                }
+
+                val chunk = 100
+                val startLine = (logTotalLines - logOffset - chunk + 1).coerceAtLeast(1)
+                val fetchCount = if (logTotalLines - logOffset < chunk) (logTotalLines - logOffset).coerceAtLeast(0) else chunk
+                val rawStdout = if (fetchCount > 0) {
+                    RootFirewallController.runRaw(
+                        "tail -n +$startLine /data/adb/lspd/log/modules_*.log 2>/dev/null | head -n $fetchCount | grep -h -E 'FA.HybridAdHook|FA.DnsHideHook'"
+                    ).stdout
+                } else ""
+                logOffset += fetchCount
+                val events = AdEventStore.mergeCurrentLog(this@AdsMatcherActivity, rawStdout)
+                val blacklist = AdsMatcherStore.loadBlacklist(this@AdsMatcherActivity)
+                val existing = (
+                    adHostPatterns + 
+                    AdMlScorer.loadDynamicPatterns(this@AdsMatcherActivity) + 
+                    blacklist + 
+                    BlacklistFeedSync.loadCached(this@AdsMatcherActivity)
+                ).toSet()
                 val grouped = linkedMapOf<String, MutableMap<String, Int>>()
                 events.forEach { event ->
                     val host = event.host.trim().lowercase()
@@ -113,7 +155,7 @@ class AdsMatcherActivity : AppCompatActivity() {
                     grouped.getOrPut(host) { linkedMapOf() }[event.status] =
                         (grouped.getOrPut(host) { linkedMapOf() }[event.status] ?: 0) + 1
                 }
-                raw.stdout.lineSequence().forEach { line ->
+                rawStdout.lineSequence().forEach { line ->
                     val lower = line.lowercase()
                     val status = when {
                         lower.contains("status=blocked") || lower.contains(" net blocked ") || lower.contains(" blocked ") -> "blocked"
@@ -129,11 +171,16 @@ class AdsMatcherActivity : AppCompatActivity() {
                     }
                 }
                 grouped.entries
+                    .filterNot { (host, _) -> host in blacklist }
                     .map { (host, statusCounts) ->
                         MatcherCandidate(host = host, statusCounts = statusCounts.toMap(), alreadyMatched = host in existing)
                     }
                     .sortedWith(compareByDescending<MatcherCandidate> { it.totalCount }.thenBy { it.host })
                     .take(100)
+            }
+            if (candidates == null) {
+                binding.outputText.text = "Pemindaian selesai: semua log telah dipindai ($logTotalLines baris)."
+                return@launch
             }
             latestMatcherCandidates = candidates
             renderMatcherCandidates(candidates)
@@ -141,7 +188,10 @@ class AdsMatcherActivity : AppCompatActivity() {
         }
     }
 
-    private fun appendSelectedMatcherCandidates() {
+    private fun markSelectedAsBlacklist() {
+        val wasBlacklist = binding.customPatternsLogEmptyText.text.toString().contains("Blacklist")
+        val wasWhitelist = binding.customPatternsLogEmptyText.text.toString().contains("Whitelist")
+
         val selected = mutableListOf<String>()
         for (i in 0 until binding.customPatternsLogContainer.childCount) {
             val row = binding.customPatternsLogContainer.getChildAt(i) as? LinearLayout ?: continue
@@ -153,11 +203,97 @@ class AdsMatcherActivity : AppCompatActivity() {
             Toast.makeText(this, "Tidak ada host/token yang dipilih.", Toast.LENGTH_SHORT).show()
             return
         }
-        val existing = parsePatternInput(binding.customPatternsInput.text?.toString().orEmpty()).toMutableList()
-        selected.forEach { host -> if (host !in existing) existing += host }
-        binding.customPatternsInput.setText(existing.joinToString("\n"))
-        renderCustomPatternStatus(existing)
-        Toast.makeText(this, "${selected.size} matcher ditambahkan.", Toast.LENGTH_SHORT).show()
+        val blacklist = AdsMatcherStore.loadBlacklist(this).toMutableSet()
+        val whitelist = AdsMatcherStore.loadWhitelist(this).toMutableSet()
+        selected.forEach {
+            blacklist += it
+            whitelist -= it
+        }
+        AdsMatcherStore.saveBlacklist(this, blacklist)
+        AdsMatcherStore.saveWhitelist(this, whitelist)
+        renderCustomPatternStatus(blacklist, whitelist)
+        
+        if (wasBlacklist) {
+            renderCustomListItems(blacklist.toList(), "Blacklist")
+        } else if (wasWhitelist) {
+            renderCustomListItems(whitelist.toList(), "Whitelist")
+        } else {
+            latestMatcherCandidates = latestMatcherCandidates.filterNot { it.host in selected }
+            renderMatcherCandidates(latestMatcherCandidates)
+        }
+        Toast.makeText(this, "${selected.size} host disimpan ke blacklist.", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun markSelectedAsWhitelist() {
+        val wasBlacklist = binding.customPatternsLogEmptyText.text.toString().contains("Blacklist")
+        val wasWhitelist = binding.customPatternsLogEmptyText.text.toString().contains("Whitelist")
+
+        val selected = mutableListOf<String>()
+        for (i in 0 until binding.customPatternsLogContainer.childCount) {
+            val row = binding.customPatternsLogContainer.getChildAt(i) as? LinearLayout ?: continue
+            val top = row.getChildAt(0) as? LinearLayout ?: continue
+            val cb = top.getChildAt(0) as? CheckBox ?: continue
+            if (cb.isChecked) selected += (cb.tag as? String ?: continue)
+        }
+        if (selected.isEmpty()) {
+            Toast.makeText(this, "Tidak ada host/token yang dipilih.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val blacklist = AdsMatcherStore.loadBlacklist(this).toMutableSet()
+        val whitelist = AdsMatcherStore.loadWhitelist(this).toMutableSet()
+        selected.forEach {
+            whitelist += it
+            blacklist -= it
+        }
+        AdsMatcherStore.saveBlacklist(this, blacklist)
+        AdsMatcherStore.saveWhitelist(this, whitelist)
+        renderCustomPatternStatus(blacklist, whitelist)
+        
+        if (wasBlacklist) {
+            renderCustomListItems(blacklist.toList(), "Blacklist")
+        } else if (wasWhitelist) {
+            renderCustomListItems(whitelist.toList(), "Whitelist")
+        } else {
+            latestMatcherCandidates = latestMatcherCandidates.filterNot { it.host in selected }
+            renderMatcherCandidates(latestMatcherCandidates)
+        }
+        Toast.makeText(this, "${selected.size} host disimpan ke whitelist.", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun clearSelectedFromLists() {
+        val wasBlacklist = binding.customPatternsLogEmptyText.text.toString().contains("Blacklist")
+        val wasWhitelist = binding.customPatternsLogEmptyText.text.toString().contains("Whitelist")
+
+        val selected = mutableListOf<String>()
+        for (i in 0 until binding.customPatternsLogContainer.childCount) {
+            val row = binding.customPatternsLogContainer.getChildAt(i) as? LinearLayout ?: continue
+            val top = row.getChildAt(0) as? LinearLayout ?: continue
+            val cb = top.getChildAt(0) as? CheckBox ?: continue
+            if (cb.isChecked) selected += (cb.tag as? String ?: continue)
+        }
+        if (selected.isEmpty()) {
+            Toast.makeText(this, "Tidak ada host/token yang dipilih.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val blacklist = AdsMatcherStore.loadBlacklist(this).toMutableSet()
+        val whitelist = AdsMatcherStore.loadWhitelist(this).toMutableSet()
+        selected.forEach {
+            blacklist -= it
+            whitelist -= it
+        }
+        AdsMatcherStore.saveBlacklist(this, blacklist)
+        AdsMatcherStore.saveWhitelist(this, whitelist)
+        renderCustomPatternStatus(blacklist, whitelist)
+        
+        if (wasBlacklist) {
+            renderCustomListItems(blacklist.toList(), "Blacklist")
+        } else if (wasWhitelist) {
+            renderCustomListItems(whitelist.toList(), "Whitelist")
+        } else {
+            latestMatcherCandidates = latestMatcherCandidates.filterNot { it.host in selected }
+            renderMatcherCandidates(latestMatcherCandidates)
+        }
+        Toast.makeText(this, "Status host terpilih dibersihkan.", Toast.LENGTH_SHORT).show()
     }
 
     private fun autoSelectNewMatcherCandidates() {
@@ -166,54 +302,43 @@ class AdsMatcherActivity : AppCompatActivity() {
             val row = binding.customPatternsLogContainer.getChildAt(i) as? LinearLayout ?: continue
             val top = row.getChildAt(0) as? LinearLayout ?: continue
             val cb = top.getChildAt(0) as? CheckBox ?: continue
-            if (cb.isEnabled && !cb.isChecked) {
+            if (!cb.isChecked) {
                 cb.isChecked = true
                 selectedCount++
             }
         }
-        Toast.makeText(this, "Auto pilih: $selectedCount matcher baru.", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Auto pilih: $selectedCount host.", Toast.LENGTH_SHORT).show()
     }
 
-    private fun saveCustomMatchers() {
-        lifecycleScope.launch {
-            val patterns = parsePatternInput(binding.customPatternsInput.text?.toString().orEmpty())
-            AdMlScorer.saveUserPatterns(this@AdsMatcherActivity, patterns)
-            renderCustomPatternStatus(patterns)
-            Toast.makeText(this@AdsMatcherActivity, "Ads Matcher disimpan: ${patterns.size}", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun previewCustomMatchers() {
+    private fun renderCustomPatternStatus(blacklist: Set<String>, whitelist: Set<String>) {
+        binding.customPatternsStatusText.text = "Memperbarui info matcher..."
         lifecycleScope.launch {
             val merged = withContext(Dispatchers.IO) { buildMergedAdPatterns() }
-            binding.outputText.text = buildString {
-                appendLine("=== Matcher Aktif (${merged.size}) ===")
-                merged.take(150).forEach { appendLine(it) }
-                if (merged.size > 150) appendLine("... ${merged.size - 150} matcher lain")
-            }
-            renderCustomPatternStatus(AdMlScorer.loadUserPatterns(this@AdsMatcherActivity))
+            binding.customPatternsStatusText.text = buildString {
+                appendLine("Blacklist: ${blacklist.size}")
+                appendLine("Whitelist: ${whitelist.size}")
+                appendLine("Matcher aktif (efektif): ${merged.size}")
+                appendLine()
+                appendLine("Top blacklist:")
+                blacklist.take(10).forEach { appendLine("• $it") }
+                if (blacklist.isEmpty()) appendLine("-")
+                appendLine()
+                appendLine("Top whitelist:")
+                whitelist.take(10).forEach { appendLine("• $it") }
+                if (whitelist.isEmpty()) appendLine("-")
+            }.trimEnd()
         }
-    }
-
-    private fun renderCustomPatternStatus(custom: List<String>) {
-        binding.customPatternsStatusText.text = buildString {
-            appendLine("Custom matcher tersimpan: ${custom.size}")
-            if (custom.isEmpty()) {
-                appendLine("Belum ada matcher tambahan.")
-            } else {
-                custom.take(20).forEach { appendLine("• $it") }
-                if (custom.size > 20) appendLine("... ${custom.size - 20} matcher lain")
-            }
-        }.trimEnd()
     }
 
     private fun renderMatcherCandidates(candidates: List<MatcherCandidate>) {
+        val blacklist = AdsMatcherStore.loadBlacklist(this)
+        val whitelist = AdsMatcherStore.loadWhitelist(this)
         val container = binding.customPatternsLogContainer
         container.removeAllViews()
         binding.customPatternsLogEmptyText.text = if (candidates.isEmpty()) {
             "Belum ada kandidat host/token dari log."
         } else {
-            "Pilih host/token dari log untuk ditambahkan ke matcher:"
+            "Pilih host/token dari log, lalu set sebagai blacklist/whitelist:"
         }
         latestMatcherCandidates = candidates
         if (candidates.isEmpty()) return
@@ -227,13 +352,14 @@ class AdsMatcherActivity : AppCompatActivity() {
             val cb = CheckBox(this).apply {
                 text = item.host
                 tag = item.host
-                isEnabled = !item.alreadyMatched
-                if (item.alreadyMatched) {
-                    text = "${item.host} (sudah aktif)"
-                    setTextColor(0xFF6B7280.toInt())
-                } else {
-                    setTextColor(0xFFE5E7EB.toInt())
+                val status = when {
+                    item.host in blacklist -> "BLACKLIST"
+                    item.host in whitelist -> "WHITELIST"
+                    item.alreadyMatched -> "ACTIVE"
+                    else -> "NEW"
                 }
+                text = "${item.host} [$status]"
+                setTextColor(0xFFE5E7EB.toInt())
                 buttonTintList = ContextCompat.getColorStateList(this@AdsMatcherActivity, android.R.color.holo_green_light)
             }
             val stats = TextView(this).apply {
@@ -251,19 +377,31 @@ class AdsMatcherActivity : AppCompatActivity() {
         }
     }
 
-    private fun parsePatternInput(raw: String): List<String> {
-        return raw.split(Regex("[,\\n]+"))
-            .map { it.trim().lowercase() }
-            .map {
-                when {
-                    it.startsWith("http://") || it.startsWith("https://") -> runCatching { URI(it).host.orEmpty() }.getOrDefault("")
-                    else -> it
-                }
+    private fun renderCustomListItems(items: List<String>, title: String) {
+        val container = binding.customPatternsLogContainer
+        container.removeAllViews()
+        binding.customPatternsLogEmptyText.text = if (items.isEmpty()) {
+            "List $title kosong."
+        } else {
+            "Item dalam $title (Pilih untuk memindahkan status):"
+        }
+        
+        items.forEach { itemHost ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, dp(4), 0, dp(4))
             }
-            .map { it.removePrefix("www.") }
-            .map { it.filter { ch -> ch.isLetterOrDigit() || ch == '.' || ch == '-' || ch == '_' || ch == '/' } }
-            .filter { it.isNotBlank() }
-            .distinct()
+            val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            val cb = CheckBox(this).apply {
+                text = itemHost
+                tag = itemHost
+                setTextColor(0xFFE5E7EB.toInt())
+                buttonTintList = ContextCompat.getColorStateList(this@AdsMatcherActivity, android.R.color.holo_blue_light)
+            }
+            top.addView(cb)
+            row.addView(top)
+            container.addView(row)
+        }
     }
 
     private fun extractAdPathTokens(urlRaw: String): List<String> {

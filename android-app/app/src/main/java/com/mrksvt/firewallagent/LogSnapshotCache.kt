@@ -28,7 +28,7 @@ object LogSnapshotCache {
             context = context,
             rawKey = KEY_NET_RAW,
             tsKey = KEY_NET_TS,
-            command = "grep -h 'FA.HybridAdHook net event ' /data/adb/lspd/log/modules_*.log 2>/dev/null | tail -n $maxLines",
+            command = "tail -n $maxLines /data/adb/lspd/log/modules_*.log 2>/dev/null | grep -h 'FA.HybridAdHook net event '",
         )
     }
 
@@ -37,7 +37,7 @@ object LogSnapshotCache {
             context = context,
             rawKey = KEY_AD_RAW,
             tsKey = KEY_AD_TS,
-            command = "grep -h -E 'FA.HybridAdHook|FA.DnsHideHook' /data/adb/lspd/log/modules_*.log 2>/dev/null | tail -n $maxLines",
+            command = "tail -n $maxLines /data/adb/lspd/log/modules_*.log 2>/dev/null | grep -h -E 'FA.HybridAdHook|FA.DnsHideHook'",
         )
     }
 

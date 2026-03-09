@@ -107,6 +107,7 @@ object DnsBypassStore {
             uids.forEach { uid ->
                 // Allow DNS traffic for bypassed UIDs (before the general block rules)
                 append("iptables -I FA_DNS 1 -m owner --uid-owner $uid -j RETURN > /dev/null 2>&1 || true;")
+                append("iptables -I FA_ADS 1 -m owner --uid-owner $uid -j RETURN > /dev/null 2>&1 || true;")
             }
         }
     }

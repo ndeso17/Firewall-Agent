@@ -465,6 +465,7 @@ class FirewallKeepAliveService : Service() {
             // Per-app bypass exemptions survive network handover
             bypassUids.forEach { uid ->
                 append("iptables -A FA_DNS -m owner --uid-owner $uid -j RETURN;")
+                append("iptables -I FA_ADS 1 -m owner --uid-owner $uid -j RETURN >/dev/null 2>&1 || true;")
             }
             append("for ip in 94.140.14.14 94.140.15.15; do ")
             append("iptables -A FA_DNS -p udp --dport 53 -d \"${'$'}ip\" -j RETURN;")
@@ -485,7 +486,7 @@ class FirewallKeepAliveService : Service() {
             append("iptables -A FA_DNS -p tcp --dport 53 -j REJECT;")
             append("while iptables -C OUTPUT -j FA_DNS > /dev/null 2>&1; do iptables -D OUTPUT -j FA_DNS > /dev/null 2>&1 || break; done;")
             append("iptables -I OUTPUT 1 -j FA_DNS;")
-            append(buildAdsFirewallEnableScript(resolveAdPatterns()))
+            append(buildAdsFirewallEnableScript(resolveAdPatterns(), bypassUids))
         }
         val r = RootFirewallController.runRaw(cmd)
         Log.i(tag, "refresh FA_DNS lock result=${r.code} bypass_uids=${bypassUids.size}")
@@ -533,7 +534,7 @@ class FirewallKeepAliveService : Service() {
             append("iptables -A FA_DNS -p udp --dport 53 -j REJECT;")
             append("iptables -A FA_DNS -p tcp --dport 53 -j REJECT;")
             append("iptables -I OUTPUT 1 -j FA_DNS;")
-            append(buildAdsFirewallEnableScript(patterns))
+            append(buildAdsFirewallEnableScript(patterns, bypassUids))
         }
         Log.i(tag, "apply FA_DNS lock bypass_uids=${bypassUids.size}")
         return RootFirewallController.runRaw(cmd)
@@ -541,14 +542,23 @@ class FirewallKeepAliveService : Service() {
 
     private fun resolveAdPatterns(): List<String> {
         val persisted = AdMlScorer.loadDynamicPatterns(this)
-        return AdMlScorer.mergePatterns(adHostPatterns, persisted)
+        return AdsMatcherStore.mergeBlockedPatterns(
+            base = adHostPatterns,
+            dynamic = persisted,
+            blacklist = AdsMatcherStore.loadBlacklist(this),
+            external = emptyList(),
+            whitelist = AdsMatcherStore.loadWhitelist(this),
+        )
     }
 
-    private fun buildAdsFirewallEnableScript(patterns: List<String>): String = buildString {
+    private fun buildAdsFirewallEnableScript(patterns: List<String>, bypassUids: Set<Int>): String = buildString {
         append("iptables -N FA_ADS >/dev/null 2>&1 || true;")
         append("iptables -F FA_ADS >/dev/null 2>&1 || true;")
         append("iptables -A FA_ADS -m owner --uid-owner 0-9999 -j RETURN;")
         append("iptables -A FA_ADS -o lo -j RETURN;")
+        bypassUids.forEach { uid ->
+            append("iptables -A FA_ADS -m owner --uid-owner $uid -j RETURN;")
+        }
         append("if iptables -m string -h >/dev/null 2>&1; then ")
         patterns.forEach { pattern ->
             append("iptables -A FA_ADS -p tcp --dport 80 -m string --algo bm --icase --string \"$pattern\" -m statistic --mode random --probability 0.35 -j RETURN >/dev/null 2>&1 || true;")

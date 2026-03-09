@@ -137,6 +137,7 @@ class HybridAdHook : IXposedHookLoadPackage {
     private val scopedPackages = linkedSetOf(
         "com.freereels.app",
         "com.worldance.drama",
+        "com.stream.drakorindoawet",
         "com.happymod.apk",
         "com.happymod",
         "com.google.android.webview",
@@ -153,6 +154,11 @@ class HybridAdHook : IXposedHookLoadPackage {
         "com.happymod.apk",
         "com.worldance.drama",
         "com.freereels.app",
+        "com.stream.drakorindoawet",
+    )
+    private val relaxedStrictPackages = linkedSetOf(
+        // Keep ad hooks enabled, but avoid strict blanket deny while debugging via Ads Matcher.
+        "com.stream.drakorindoawet",
     )
     private val browserGuardPackages = linkedSetOf(
         "com.android.chrome",
@@ -229,8 +235,12 @@ class HybridAdHook : IXposedHookLoadPackage {
     )
     private val networkEventDedup = ConcurrentHashMap<String, Long>()
     private val requestDecisionEngine by lazy {
+        val strictDenyDefaultPackages = strictAdPackages.filterNot { relaxedStrictPackages.contains(it) }.toSet()
+        val strictCrossAppPackages = strictAdPackages.filterNot { relaxedStrictPackages.contains(it) }.toSet()
         RequestDecisionEngine(
             strictPackages = strictAdPackages,
+            strictDenyDefaultPackages = strictDenyDefaultPackages,
+            strictCrossAppPackages = strictCrossAppPackages,
             browserGuardPackages = browserGuardPackages,
             officialTrustedHosts = officialTrustedHosts,
             officialPackageHosts = officialPackageHosts,
@@ -600,6 +610,7 @@ class HybridAdHook : IXposedHookLoadPackage {
             XposedBridge.hookAllMethods(activityClass, "onResume", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     val activity = param.thisObject as? Activity ?: return
+                    if (shouldSkipGenericAdUiKill(lpparam.packageName, activity)) return
                     val className = activity.javaClass.name.lowercase(Locale.US)
                     if (!isLikelyAdUiClassName(className) && !hasLikelyAdOverlayOnScreen(activity)) return
                     runCatching { activity.finish() }
@@ -654,9 +665,11 @@ class HybridAdHook : IXposedHookLoadPackage {
                     val runnableName = runnable.javaClass.name.lowercase(Locale.US)
                     if (!isLikelyAdUiClassName(runnableName)) return
                     param.args[1] = 80L
-                    XposedBridge.log(
-                        "FA.HybridAdHook shortened ad delay in ${lpparam.packageName}: " +
+                    logNetworkEventOnce(
+                        dedupKey = "short-delay|${lpparam.packageName}|${runnable.javaClass.name}|$delay",
+                        message = "FA.HybridAdHook shortened ad delay in ${lpparam.packageName}: " +
                             "runnable=${runnable.javaClass.name} from=${delay}ms to=80ms",
+                        ttlMs = 8_000L,
                     )
                 }
             })
@@ -1077,6 +1090,7 @@ class HybridAdHook : IXposedHookLoadPackage {
             }
         }
         if (isStrictAdPackage(policyPkg) &&
+            !isRelaxedStrictPackage(policyPkg) &&
             action.equals(Intent.ACTION_VIEW, ignoreCase = true) &&
             (dataString.startsWith("http://", true) ||
                 dataString.startsWith("https://", true) ||
@@ -1087,10 +1101,17 @@ class HybridAdHook : IXposedHookLoadPackage {
         ) {
             return "strict-action-view-block"
         }
-        if (isStrictAdPackage(policyPkg) && !targetPkg.isNullOrBlank() && targetPkg != policyPkg) {
+        if (isStrictAdPackage(policyPkg) &&
+            !isRelaxedStrictPackage(policyPkg) &&
+            !targetPkg.isNullOrBlank() &&
+            targetPkg != policyPkg
+        ) {
             return "strict-cross-app-block target=$targetPkg"
         }
-        if (isStrictAdPackage(policyPkg) && action.equals(Intent.ACTION_CHOOSER, ignoreCase = true)) {
+        if (isStrictAdPackage(policyPkg) &&
+            !isRelaxedStrictPackage(policyPkg) &&
+            action.equals(Intent.ACTION_CHOOSER, ignoreCase = true)
+        ) {
             return "strict-chooser-block"
         }
         if (targetPkg.orEmpty().lowercase(Locale.US).contains("chrome") && dataString.isBlank() && payloadLower.isBlank()) {
@@ -1135,6 +1156,17 @@ class HybridAdHook : IXposedHookLoadPackage {
     }
 
     private fun isStrictAdPackage(pkg: String): Boolean = strictAdPackages.contains(pkg)
+
+    private fun isRelaxedStrictPackage(pkg: String): Boolean = relaxedStrictPackages.contains(pkg)
+
+    private fun shouldSkipGenericAdUiKill(sourcePkg: String, activity: Activity): Boolean {
+        val policyPkg = resolvePolicyPackage(sourcePkg)
+        if (!isRelaxedStrictPackage(policyPkg)) return false
+        val className = activity.javaClass.name.lowercase(Locale.US)
+        return className.contains("activitysplash") ||
+            className.contains(".splashactivity") ||
+            className.endsWith(".splash")
+    }
 
     private fun isHighRiskExternalJump(intent: Intent, sourcePkg: String): Boolean {
         return getIntentBlockReason(intent, sourcePkg) != null

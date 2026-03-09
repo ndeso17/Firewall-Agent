@@ -19,6 +19,8 @@ data class DecisionResult(
 
 class RequestDecisionEngine(
     private val strictPackages: Set<String>,
+    private val strictDenyDefaultPackages: Set<String> = strictPackages,
+    private val strictCrossAppPackages: Set<String> = strictPackages,
     private val browserGuardPackages: Set<String>,
     private val officialTrustedHosts: Set<String>,
     private val officialPackageHosts: Map<String, Set<String>>,
@@ -43,6 +45,7 @@ class RequestDecisionEngine(
         val scheme = parseScheme(urlString)
         val path = parsePath(urlString)
         val strict = strictPackages.contains(pkg)
+        val strictDenyDefault = strictDenyDefaultPackages.contains(pkg)
         val browserGuard = browserGuardPackages.contains(pkg)
         if (!strict && !browserGuard) return DecisionResult(DecisionAction.ALLOW, "out-of-scope")
 
@@ -71,7 +74,7 @@ class RequestDecisionEngine(
             strict && isFeedBlockedHost(hostLower) -> DecisionResult(DecisionAction.BLOCK, "external-blacklist-feed")
             strict && looksLikeMalwareDownload(urlLower, hostLower, mime) -> DecisionResult(DecisionAction.BLOCK, "strict-malware-download")
             strict && isAdOrFraudUrl(urlLower, hostLower) -> DecisionResult(DecisionAction.BLOCK, "ml-anomaly-host")
-            strict && !isAllowlistedHost(pkg, hostLower) -> DecisionResult(DecisionAction.BLOCK, "strict-deny-default-non-allowlist")
+            strictDenyDefault && !isAllowlistedHost(pkg, hostLower) -> DecisionResult(DecisionAction.BLOCK, "strict-deny-default-non-allowlist")
             strict && scoreAsRisky(urlLower, hostLower, referrer) -> DecisionResult(DecisionAction.BLOCK, "ml-score-threshold")
             else -> DecisionResult(DecisionAction.ALLOW, "allowlisted")
         }
@@ -88,6 +91,8 @@ class RequestDecisionEngine(
         mime: String = "",
     ): DecisionResult {
         val strict = strictPackages.contains(pkg)
+        val strictDenyDefault = strictDenyDefaultPackages.contains(pkg)
+        val strictCrossApp = strictCrossAppPackages.contains(pkg)
         val browserGuard = browserGuardPackages.contains(pkg)
         if (!strict && !browserGuard) return DecisionResult(DecisionAction.ALLOW, "out-of-scope")
         val lowerAction = action.lowercase(Locale.US)
@@ -112,10 +117,10 @@ class RequestDecisionEngine(
             if (looksLikeSuspiciousCampaignHost(hostLower)) return DecisionResult(DecisionAction.BLOCK, "external-jump-suspicious-host")
             if (looksLikeMalwareDownload(lowerData, hostLower, mime)) return DecisionResult(DecisionAction.BLOCK, "external-jump-malware-download")
             if (isAdOrFraudUrl(lowerData, hostLower)) return DecisionResult(DecisionAction.BLOCK, "ml-anomaly-host")
-            if (strict && !isAllowlistedHost(pkg, hostLower) && (scheme == "http" || scheme == "https" || scheme == "content" || scheme == "file")) {
+            if (strictDenyDefault && !isAllowlistedHost(pkg, hostLower) && (scheme == "http" || scheme == "https" || scheme == "content" || scheme == "file")) {
                 return DecisionResult(DecisionAction.BLOCK, "external-jump-non-allowlist")
             }
-            if (strict && targetLower.isNotBlank() && targetLower != pkg.lowercase(Locale.US)) {
+            if (strictCrossApp && targetLower.isNotBlank() && targetLower != pkg.lowercase(Locale.US)) {
                 return DecisionResult(DecisionAction.BLOCK, "cross-app-jump")
             }
         }

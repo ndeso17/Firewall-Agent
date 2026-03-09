@@ -97,8 +97,24 @@ object AdEventStore {
                 ) -> "blocked"
             else -> return null
         }
-        val pkg = Regex("""\bin\s+([a-zA-Z0-9._]+)""").find(line)?.groupValues?.getOrNull(1)?.trim().orEmpty()
-        if (pkg.isBlank() || pkg == "com.google.android.gms" || pkg == "com.google.android.webview") return null
+        val policyPkg = extractKv(line, "policy_pkg")
+        val pkgFromKv = extractKv(line, "pkg")
+        val pkgFromIn = Regex("""\bin\s+([a-zA-Z0-9._]+)""")
+            .find(line)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.trim()
+            .orEmpty()
+        val rawPkg = when {
+            policyPkg.isNotBlank() -> policyPkg
+            pkgFromKv.isNotBlank() -> pkgFromKv
+            else -> pkgFromIn
+        }
+        val pkg = when {
+            rawPkg == "com.google.android.webview" && policyPkg.isNotBlank() -> policyPkg
+            else -> rawPkg
+        }
+        if (pkg.isBlank() || pkg == "com.google.android.gms") return null
         val ts = parseTimestamp(line, now, zone)?.toEpochMilli() ?: return null
         val host = extractHost(line)
         val signature = "${ts}_${pkg}_${status}_${host}_${line.hashCode()}"
@@ -122,6 +138,15 @@ object AdEventStore {
             return it.trim().lowercase(Locale.ROOT)
         }
         return "-"
+    }
+
+    private fun extractKv(line: String, key: String): String {
+        return Regex("""\b$key=([A-Za-z0-9._-]+)""")
+            .find(line)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.trim()
+            .orEmpty()
     }
 
     private fun parseTimestamp(line: String, now: Instant, zone: ZoneId): Instant? {
