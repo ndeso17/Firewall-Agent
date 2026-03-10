@@ -142,15 +142,19 @@ class AdsMatcherActivity : AppCompatActivity() {
                 logOffset += fetchCount
                 val events = AdEventStore.mergeCurrentLog(this@AdsMatcherActivity, rawStdout)
                 val blacklist = AdsMatcherStore.loadBlacklist(this@AdsMatcherActivity)
+                val whitelist = AdsMatcherStore.loadWhitelist(this@AdsMatcherActivity)
+                val normalizedBlacklist = blacklist.map { AdsMatcherStore.normalize(it) }.toSet()
+                val normalizedWhitelist = whitelist.map { AdsMatcherStore.normalize(it) }.toSet()
                 val existing = (
                     adHostPatterns + 
                     AdMlScorer.loadDynamicPatterns(this@AdsMatcherActivity) + 
-                    blacklist + 
+                    blacklist +
+                    whitelist +
                     BlacklistFeedSync.loadCached(this@AdsMatcherActivity)
-                ).toSet()
+                ).map { AdsMatcherStore.normalize(it) }.toSet()
                 val grouped = linkedMapOf<String, MutableMap<String, Int>>()
                 events.forEach { event ->
-                    val host = event.host.trim().lowercase()
+                    val host = AdsMatcherStore.normalize(event.host.trim().lowercase())
                     if (host.isBlank() || host == "-") return@forEach
                     grouped.getOrPut(host) { linkedMapOf() }[event.status] =
                         (grouped.getOrPut(host) { linkedMapOf() }[event.status] ?: 0) + 1
@@ -166,14 +170,21 @@ class AdsMatcherActivity : AppCompatActivity() {
                     val url = Regex("""\burl=([^\s]+)""").find(line)?.groupValues?.getOrNull(1).orEmpty()
                     if (url.isBlank()) return@forEach
                     extractAdPathTokens(url).forEach { token ->
-                        grouped.getOrPut(token) { linkedMapOf() }[status] =
-                            (grouped.getOrPut(token) { linkedMapOf() }[status] ?: 0) + 1
+                        val n = AdsMatcherStore.normalize(token)
+                        if (n.isNotBlank()) {
+                            grouped.getOrPut(n) { linkedMapOf() }[status] =
+                                (grouped.getOrPut(n) { linkedMapOf() }[status] ?: 0) + 1
+                        }
                     }
                 }
                 grouped.entries
-                    .filterNot { (host, _) -> host in blacklist }
+                    .filterNot { (host, _) ->
+                        val n = AdsMatcherStore.normalize(host)
+                        n in normalizedBlacklist || n in normalizedWhitelist
+                    }
                     .map { (host, statusCounts) ->
-                        MatcherCandidate(host = host, statusCounts = statusCounts.toMap(), alreadyMatched = host in existing)
+                        val n = AdsMatcherStore.normalize(host)
+                        MatcherCandidate(host = host, statusCounts = statusCounts.toMap(), alreadyMatched = n in existing)
                     }
                     .sortedWith(compareByDescending<MatcherCandidate> { it.totalCount }.thenBy { it.host })
                     .take(100)

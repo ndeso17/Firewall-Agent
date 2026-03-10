@@ -116,7 +116,8 @@ object NotifyHelper {
             .setContentText(content)
             .setStyle(NotificationCompat.BigTextStyle().bigText(content))
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setAutoCancel(true)
+            .setAutoCancel(false)
+            .setOnlyAlertOnce(true)
             .build()
         NotificationManagerCompat.from(context).notify(id, notif)
     }
@@ -146,7 +147,7 @@ object NotifyHelper {
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setContentIntent(pendingIntent)
-            .setAutoCancel(true)
+            .setAutoCancel(false)
             .setOnlyAlertOnce(false)
             .build()
         NotificationManagerCompat.from(context).notify(id, notif)
@@ -230,7 +231,8 @@ object NotifyHelper {
             .setContentText(content)
             .setStyle(NotificationCompat.BigTextStyle().bigText(content))
             .setPriority(if (success) NotificationCompat.PRIORITY_DEFAULT else NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(true)
+            .setAutoCancel(false)
+            .setOnlyAlertOnce(true)
             .build()
         NotificationManagerCompat.from(context).notify(id, notif)
     }

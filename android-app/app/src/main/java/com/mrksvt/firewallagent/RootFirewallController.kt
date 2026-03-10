@@ -36,6 +36,7 @@ object RootFirewallController {
     private var ctlPath: String = ""
     @Volatile private var initialized = false
     private const val MIN_APP_UID = 10000
+    private const val MAGISK_RULE_MODULE_DIR = "/data/adb/modules/firewallagent-rules"
 
     fun isProtectedSystemUid(uid: Int): Boolean = uid in 1 until MIN_APP_UID
     fun isManagedAppUid(uid: Int): Boolean = uid >= MIN_APP_UID
@@ -79,7 +80,12 @@ object RootFirewallController {
     fun disable(): ExecResult {
         val cmd = buildString {
             append("/system/bin/sh $ctlPath disable;")
+            append("if [ -s \"$MAGISK_RULE_MODULE_DIR/original_rules.v4\" ] && command -v iptables-restore >/dev/null 2>&1; then ")
+            append("iptables-restore < \"$MAGISK_RULE_MODULE_DIR/original_rules.v4\" >/dev/null 2>&1 || true;")
+            append("else ")
             append(clearAppChainsScript())
+            append("fi;")
+            append("touch \"$MAGISK_RULE_MODULE_DIR/disable\" >/dev/null 2>&1 || true;")
         }
         return runRoot(cmd)
     }
@@ -201,6 +207,7 @@ object RootFirewallController {
 
         val setup = runRoot(
             buildString {
+                append("set -e;")
                 append("iptables -N FA_APP >/dev/null 2>&1 || true;")
                 append("iptables -N FA_APP_IN >/dev/null 2>&1 || true;")
                 append("while iptables -C OUTPUT -j FA_APP >/dev/null 2>&1; do iptables -D OUTPUT -j FA_APP >/dev/null 2>&1 || break; done;")
@@ -221,6 +228,7 @@ object RootFirewallController {
                 restricted++
                 val chain = "FAU_${r.uid}"
                 val cmd = buildString {
+                    append("set -e;")
                     append("iptables -N $chain >/dev/null 2>&1 || true;")
                     append("iptables -F $chain >/dev/null 2>&1 || true;")
                     append("iptables -A FA_APP -m owner --uid-owner ${r.uid} -j $chain >/dev/null 2>&1;")
@@ -251,7 +259,10 @@ object RootFirewallController {
                     }
                     append("iptables -A $chain -j REJECT --reject-with icmp-port-unreachable >/dev/null 2>&1;")
                 }
-                val res = runRoot(cmd)
+                var res = runRoot(cmd)
+                if (!res.ok) {
+                    res = runRoot(cmd)
+                }
                 if (!res.ok) {
                     failed++
                     errLines += "uid=${r.uid} apply_failed code=${res.code}"
@@ -271,6 +282,7 @@ object RootFirewallController {
 
         val finish = runRoot(
             buildString {
+                append("set -e;")
                 append("iptables -I OUTPUT 1 -j FA_APP >/dev/null 2>&1 || true;")
                 append("iptables -I INPUT 1 -j FA_APP_IN >/dev/null 2>&1 || true;")
                 append(normalizeCellularInterfaceRulesScript())
@@ -417,6 +429,7 @@ object RootFirewallController {
 
         val setup = runRoot(
             buildString {
+                append("set -e;")
                 append("iptables -N FA_APP >/dev/null 2>&1 || true;")
                 append("iptables -N FA_APP_IN >/dev/null 2>&1 || true;")
                 append("iptables -C OUTPUT -j FA_APP >/dev/null 2>&1 || iptables -I OUTPUT 1 -j FA_APP >/dev/null 2>&1 || true;")
@@ -430,12 +443,17 @@ object RootFirewallController {
 
         normalizedRemove.forEach { uid ->
             val cmd = buildString {
+                append("set -e;")
                 append("while iptables -C FA_APP -m owner --uid-owner $uid -j FAU_$uid >/dev/null 2>&1; do iptables -D FA_APP -m owner --uid-owner $uid -j FAU_$uid >/dev/null 2>&1 || break; done;")
                 append("while iptables -C FA_APP_IN -m connmark --mark $uid -j REJECT --reject-with icmp-port-unreachable >/dev/null 2>&1; do iptables -D FA_APP_IN -m connmark --mark $uid -j REJECT --reject-with icmp-port-unreachable >/dev/null 2>&1 || break; done;")
                 append("iptables -F FAU_$uid >/dev/null 2>&1 || true;")
                 append("iptables -X FAU_$uid >/dev/null 2>&1 || true;")
             }
-            val res = runRoot(cmd)
+            var res = runRoot(cmd)
+            if (!res.ok) {
+                // Retry once to reduce transient race/failure when many rules are injected rapidly.
+                res = runRoot(cmd)
+            }
             if (res.ok) applied++ else failed++
             if (res.stdout.isNotBlank()) outLines += res.stdout
             if (res.stderr.isNotBlank()) errLines += "uid=$uid remove_failed: ${res.stderr}"
@@ -446,6 +464,7 @@ object RootFirewallController {
         normalizedUpsert.forEach { r ->
             val chain = "FAU_${r.uid}"
             val cmd = buildString {
+                append("set -e;")
                 append("while iptables -C FA_APP -m owner --uid-owner ${r.uid} -j $chain >/dev/null 2>&1; do iptables -D FA_APP -m owner --uid-owner ${r.uid} -j $chain >/dev/null 2>&1 || break; done;")
                 append("while iptables -C FA_APP_IN -m connmark --mark ${r.uid} -j REJECT --reject-with icmp-port-unreachable >/dev/null 2>&1; do iptables -D FA_APP_IN -m connmark --mark ${r.uid} -j REJECT --reject-with icmp-port-unreachable >/dev/null 2>&1 || break; done;")
                 append("iptables -N $chain >/dev/null 2>&1 || true;")
@@ -479,7 +498,11 @@ object RootFirewallController {
                 append("iptables -A $chain -j REJECT --reject-with icmp-port-unreachable >/dev/null 2>&1;")
                 append("iptables -A FA_APP -m owner --uid-owner ${r.uid} -j $chain >/dev/null 2>&1;")
             }
-            val res = runRoot(cmd)
+            var res = runRoot(cmd)
+            if (!res.ok) {
+                // Retry once for robustness.
+                res = runRoot(cmd)
+            }
             if (res.ok) applied++ else failed++
             if (res.stdout.isNotBlank()) outLines += res.stdout
             if (res.stderr.isNotBlank()) errLines += "uid=${r.uid} upsert_failed: ${res.stderr}"
@@ -494,6 +517,94 @@ object RootFirewallController {
         )
         val summary = ApplyRulesSummary(total, processed, normalizedUpsert.size, applied, failed)
         return final to summary
+    }
+
+    fun syncMagiskRuleModule(rules: List<AppNetRule>): ExecResult {
+        val normalized = rules
+            .filter { isManagedAppUid(it.uid) }
+            .distinctBy { it.uid }
+        val applyScript = renderManagedRulesApplyScript(normalized)
+        val cmd = buildString {
+            append("MOD=$MAGISK_RULE_MODULE_DIR;")
+            append("mkdir -p \"$MAGISK_RULE_MODULE_DIR\";")
+            append("if [ ! -s \"$MAGISK_RULE_MODULE_DIR/original_rules.v4\" ]; then ")
+            append("if command -v iptables-save >/dev/null 2>&1; then iptables-save > \"$MAGISK_RULE_MODULE_DIR/original_rules.v4\" 2>/dev/null || true; fi;")
+            append("fi;")
+            append("cat > \"$MAGISK_RULE_MODULE_DIR/module.prop\" <<'EOF'\n")
+            append("id=firewallagent-rules\n")
+            append("name=Firewall Agent Rules Persist\n")
+            append("version=1.1.0\n")
+            append("versionCode=110\n")
+            append("author=Firewall Agent\n")
+            append("description=Persist and restore Firewall Agent iptables rules.\n")
+            append("EOF\n")
+            append("cat > \"$MAGISK_RULE_MODULE_DIR/rules_apply.sh\" <<'EOF'\n")
+            append(applyScript)
+            append("\nEOF\n")
+            append("chmod 0755 \"$MAGISK_RULE_MODULE_DIR/rules_apply.sh\" 2>/dev/null || true;")
+            append("cat > \"$MAGISK_RULE_MODULE_DIR/service.sh\" <<'EOF'\n")
+            append("#!/system/bin/sh\n")
+            append("MODDIR=${'$'}{0%/*}\n")
+            append("[ -f \"${'$'}MODDIR/disable\" ] && exit 0\n")
+            append("sh \"${'$'}MODDIR/rules_apply.sh\" >/dev/null 2>&1\n")
+            append("EOF\n")
+            append("chmod 0755 \"$MAGISK_RULE_MODULE_DIR/service.sh\" 2>/dev/null || true;")
+            append("cat > \"$MAGISK_RULE_MODULE_DIR/uninstall.sh\" <<'EOF'\n")
+            append("#!/system/bin/sh\n")
+            append("MODDIR=${'$'}{0%/*}\n")
+            append("if [ -s \"${'$'}MODDIR/original_rules.v4\" ] && command -v iptables-restore >/dev/null 2>&1; then\n")
+            append("  iptables-restore < \"${'$'}MODDIR/original_rules.v4\" >/dev/null 2>&1 || true\n")
+            append("else\n")
+            append("  for ch in FA_APP FA_APP_IN FA_APP6; do\n")
+            append("    while iptables -C OUTPUT -j ${'$'}ch >/dev/null 2>&1; do iptables -D OUTPUT -j ${'$'}ch >/dev/null 2>&1 || break; done\n")
+            append("    while iptables -C INPUT -j ${'$'}ch >/dev/null 2>&1; do iptables -D INPUT -j ${'$'}ch >/dev/null 2>&1 || break; done\n")
+            append("    iptables -F ${'$'}ch >/dev/null 2>&1 || true\n")
+            append("    iptables -X ${'$'}ch >/dev/null 2>&1 || true\n")
+            append("  done\n")
+            append("fi\n")
+            append("EOF\n")
+            append("chmod 0755 \"$MAGISK_RULE_MODULE_DIR/uninstall.sh\" 2>/dev/null || true;")
+            append("cat > \"$MAGISK_RULE_MODULE_DIR/action.sh\" <<'EOF'\n")
+            append("#!/system/bin/sh\n")
+            append("MODDIR=${'$'}{0%/*}\n")
+            append("echo \"Firewall Agent Rules Persist Action\"\n")
+            append("if [ -s \"${'$'}MODDIR/original_rules.v4\" ] && command -v iptables-restore >/dev/null 2>&1; then\n")
+            append("  iptables-restore < \"${'$'}MODDIR/original_rules.v4\" >/dev/null 2>&1 || true\n")
+            append("  touch \"${'$'}MODDIR/disable\" >/dev/null 2>&1 || true\n")
+            append("  echo \"Restored original iptables snapshot, persist mode disabled.\"\n")
+            append("else\n")
+            append("  for ch in FA_APP FA_APP_IN FA_APP6; do\n")
+            append("    while iptables -C OUTPUT -j ${'$'}ch >/dev/null 2>&1; do iptables -D OUTPUT -j ${'$'}ch >/dev/null 2>&1 || break; done\n")
+            append("    while iptables -C INPUT -j ${'$'}ch >/dev/null 2>&1; do iptables -D INPUT -j ${'$'}ch >/dev/null 2>&1 || break; done\n")
+            append("    iptables -F ${'$'}ch >/dev/null 2>&1 || true\n")
+            append("    iptables -X ${'$'}ch >/dev/null 2>&1 || true\n")
+            append("  done\n")
+            append("  touch \"${'$'}MODDIR/disable\" >/dev/null 2>&1 || true\n")
+            append("  echo \"No backup snapshot found; cleared FA chains and disabled persist mode.\"\n")
+            append("fi\n")
+            append("echo \"Done.\"\n")
+            append("EOF\n")
+            append("chmod 0755 \"$MAGISK_RULE_MODULE_DIR/action.sh\" 2>/dev/null || true;")
+            append("touch \"$MAGISK_RULE_MODULE_DIR/update\" 2>/dev/null || true;")
+            append("rm -f \"$MAGISK_RULE_MODULE_DIR/disable\" 2>/dev/null || true;")
+            append("echo magisk_module_synced=1 managed_rules=${normalized.size};")
+        }
+        return runRoot(cmd)
+    }
+
+    fun restoreFromMagiskRuleBackup(): ExecResult {
+        val cmd = buildString {
+            append("MOD=$MAGISK_RULE_MODULE_DIR;")
+            append("if [ -s \"$MAGISK_RULE_MODULE_DIR/original_rules.v4\" ] && command -v iptables-restore >/dev/null 2>&1; then ")
+            append("iptables-restore < \"$MAGISK_RULE_MODULE_DIR/original_rules.v4\" >/dev/null 2>&1 || true;")
+            append("echo restore_source=backup;")
+            append("else ")
+            append(clearAppChainsScript())
+            append("echo restore_source=clear_chains;")
+            append("fi;")
+            append("touch \"$MAGISK_RULE_MODULE_DIR/disable\" 2>/dev/null || true;")
+        }
+        return runRoot(cmd)
     }
 
     fun normalizeCellularInterfaceRules(): ExecResult = runRoot(normalizeCellularInterfaceRulesScript())
@@ -700,4 +811,55 @@ object RootFirewallController {
     }
 
     private fun shellWord(value: String): String = "'${value.replace("'", "'\"'\"'")}'"
+
+    private fun renderManagedRulesApplyScript(rules: List<AppNetRule>): String {
+        val sb = StringBuilder()
+        sb.appendLine("#!/system/bin/sh")
+        sb.appendLine("iptables -N FA_APP >/dev/null 2>&1 || true")
+        sb.appendLine("iptables -N FA_APP_IN >/dev/null 2>&1 || true")
+        sb.appendLine("while iptables -C OUTPUT -j FA_APP >/dev/null 2>&1; do iptables -D OUTPUT -j FA_APP >/dev/null 2>&1 || break; done")
+        sb.appendLine("while iptables -C INPUT -j FA_APP_IN >/dev/null 2>&1; do iptables -D INPUT -j FA_APP_IN >/dev/null 2>&1 || break; done")
+        sb.appendLine("iptables -F FA_APP >/dev/null 2>&1 || true")
+        sb.appendLine("iptables -F FA_APP_IN >/dev/null 2>&1 || true")
+        sb.appendLine("for c in $(iptables -S 2>/dev/null | awk '{print ${'$'}2}' | grep '^FAU_' 2>/dev/null); do iptables -F \"${'$'}c\" >/dev/null 2>&1 || true; iptables -X \"${'$'}c\" >/dev/null 2>&1 || true; done")
+
+        rules.forEach { r ->
+            val allAllowed = r.local && r.wifi && r.cellular && r.vpn && r.bluetooth && r.tor && (r.roaming || r.cellular)
+            if (allAllowed) return@forEach
+            val chain = "FAU_${r.uid}"
+            sb.appendLine("iptables -N $chain >/dev/null 2>&1 || true")
+            sb.appendLine("iptables -F $chain >/dev/null 2>&1 || true")
+            if (r.local) {
+                sb.appendLine("iptables -A $chain -o lo -j RETURN >/dev/null 2>&1")
+                sb.appendLine("iptables -A $chain -d 127.0.0.0/8 -j RETURN >/dev/null 2>&1")
+            }
+            if (r.wifi) {
+                sb.appendLine("iptables -A $chain -o wlan+ -j RETURN >/dev/null 2>&1")
+            }
+            if (r.cellular || r.roaming) {
+                sb.appendLine("iptables -A $chain -o rmnet+ -j RETURN >/dev/null 2>&1")
+                sb.appendLine("iptables -A $chain -o ccmni+ -j RETURN >/dev/null 2>&1")
+                sb.appendLine("iptables -A $chain -o pdp+ -j RETURN >/dev/null 2>&1")
+                sb.appendLine("iptables -A $chain -o clat+ -j RETURN >/dev/null 2>&1")
+            }
+            if (r.vpn) {
+                sb.appendLine("iptables -A $chain -o tun+ -j RETURN >/dev/null 2>&1")
+                sb.appendLine("iptables -A $chain -o ppp+ -j RETURN >/dev/null 2>&1")
+                sb.appendLine("iptables -A $chain -o wg+ -j RETURN >/dev/null 2>&1")
+            }
+            if (r.bluetooth) {
+                sb.appendLine("iptables -A $chain -o bnep+ -j RETURN >/dev/null 2>&1")
+            }
+            if (r.tor) {
+                sb.appendLine("iptables -A $chain -d 127.0.0.1/32 -p tcp -m tcp --dport 9040 -j RETURN >/dev/null 2>&1")
+                sb.appendLine("iptables -A $chain -d 127.0.0.1/32 -p tcp -m tcp --dport 9050 -j RETURN >/dev/null 2>&1")
+            }
+            sb.appendLine("iptables -A $chain -j REJECT --reject-with icmp-port-unreachable >/dev/null 2>&1")
+            sb.appendLine("iptables -A FA_APP -m owner --uid-owner ${r.uid} -j $chain >/dev/null 2>&1")
+        }
+        sb.appendLine("iptables -I OUTPUT 1 -j FA_APP >/dev/null 2>&1 || true")
+        sb.appendLine("iptables -I INPUT 1 -j FA_APP_IN >/dev/null 2>&1 || true")
+        sb.appendLine("echo rules_apply=ok")
+        return sb.toString().trim()
+    }
 }

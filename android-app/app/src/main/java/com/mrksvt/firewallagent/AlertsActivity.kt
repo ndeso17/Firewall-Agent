@@ -13,17 +13,20 @@ import com.mrksvt.firewallagent.databinding.ActivityAlertsBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class AlertsActivity : AppCompatActivity() {
     private lateinit var binding: ActivityAlertsBinding
+    private lateinit var loadingDialog: LoadingDialogController
     private var allAlerts: List<AlertItem> = emptyList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityAlertsBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        loadingDialog = LoadingDialogController(this)
 
         binding.refreshBtn.setOnClickListener { loadAlerts() }
         binding.searchInput.addTextChangedListener(SimpleTextWatcher { renderAlerts() })
@@ -32,6 +35,13 @@ class AlertsActivity : AppCompatActivity() {
 
     private fun loadAlerts() {
         lifecycleScope.launch {
+            val loadStarted = System.currentTimeMillis()
+            loadingDialog.showProgress(
+                title = "ML Alerts",
+                processed = 10,
+                total = 100,
+                phase = "Mengambil log backend...",
+            )
             val data = withContext(Dispatchers.IO) {
                 coroutineScope {
                     val runnerDef = async { RootFirewallController.tailServiceLog(500).stdout }
@@ -40,8 +50,25 @@ class AlertsActivity : AppCompatActivity() {
                     Triple(runnerDef.await(), netDef.await(), actionDef.await())
                 }
             }
+            loadingDialog.updateProgress(
+                title = "ML Alerts",
+                processed = 70,
+                total = 100,
+                phase = "Mengagregasi alert host + uid...",
+            )
             allAlerts = parseAlerts(data.first, data.second, data.third)
             renderAlerts()
+            loadingDialog.updateProgress(
+                title = "ML Alerts",
+                processed = 100,
+                total = 100,
+                phase = "Finalisasi...",
+            )
+            val elapsed = System.currentTimeMillis() - loadStarted
+            if (elapsed < 700L) {
+                delay(700L - elapsed)
+            }
+            loadingDialog.dismissProgress()
         }
     }
 
@@ -192,7 +219,7 @@ class AlertsActivity : AppCompatActivity() {
         if (netLog.isBlank()) return emptyList()
         val lines = netLog.lines()
             .filter { it.contains("FA.HybridAdHook net event ") }
-            .takeLast(600)
+            .takeLast(1200)
             .reversed()
 
         val riskyReasons = setOf(
@@ -203,11 +230,14 @@ class AlertsActivity : AppCompatActivity() {
             "browser-malware-download",
         )
 
-        return lines.mapIndexedNotNull { idx, line ->
+        data class Agg(val uid: String, val pkg: String, val host: String, val reason: String, var count: Int, var method: String, var request: String)
+        val grouped = linkedMapOf<String, Agg>()
+
+        lines.forEach { line ->
             val status = extractKey(line, "status").lowercase()
             val reason = extractKey(line, "reason").lowercase()
-            if (status != "blocked") return@mapIndexedNotNull null
-            if (reason.isBlank() || (reason !in riskyReasons && !reason.startsWith("ml-"))) return@mapIndexedNotNull null
+            if (status != "blocked") return@forEach
+            if (reason.isBlank() || (reason !in riskyReasons && !reason.startsWith("ml-"))) return@forEach
 
             val policyPkg = extractKey(line, "policy_pkg")
             val pkg = if (policyPkg.isNotBlank()) policyPkg else extractKey(line, "pkg")
@@ -215,21 +245,30 @@ class AlertsActivity : AppCompatActivity() {
             val host = extractKey(line, "host").ifBlank { "-" }
             val method = extractKey(line, "method").ifBlank { "UNKNOWN" }
             val request = extractKey(line, "request").ifBlank { "download" }
-            val score = if (reason == "ml-score-threshold") "0.90" else "0.80"
-            val incidentId = "traffic_${System.currentTimeMillis()}_$idx"
+            val key = "$uid|$host|$reason"
+            val curr = grouped[key]
+            if (curr == null) {
+                grouped[key] = Agg(uid, pkg, host, reason, 1, method, request)
+            } else {
+                curr.count += 1
+            }
+        }
 
+        return grouped.values.mapIndexed { idx, agg ->
+            val score = if (agg.reason == "ml-score-threshold") "0.90" else "0.80"
+            val incidentId = "traffic_agg_${System.currentTimeMillis()}_$idx"
             AlertItem(
                 incidentId = incidentId,
                 mode = "ml-traffic",
-                uid = uid,
+                uid = agg.uid,
                 score = score,
-                reason = reason,
+                reason = agg.reason,
                 decision = "block_host",
                 plannedAction = "keep_blocked",
                 category = "Traffic Anomaly",
-                description = "Host=$host | Request=$request | Method=$method | pkg=$pkg",
+                description = "Host=${agg.host} | UID=${agg.uid} | Count=${agg.count} | Request=${agg.request} | Method=${agg.method} | pkg=${agg.pkg}",
             )
-        }
+        }.sortedByDescending { it.description.substringAfter("Count=").substringBefore(" ").toIntOrNull() ?: 0 }
     }
 
     private fun resolveUidForPackage(pkg: String): Int? {

@@ -2,6 +2,7 @@ package com.mrksvt.firewallagent
 
 import android.content.Context
 import org.json.JSONArray
+import java.net.IDN
 import java.util.Locale
 
 object AdsMatcherStore {
@@ -73,11 +74,16 @@ object AdsMatcherStore {
     }
 
     fun normalize(raw: String): String {
-        return raw.trim()
+        val cleaned = raw.trim()
             .lowercase(Locale.ROOT)
             .removePrefix("http://")
             .removePrefix("https://")
             .removePrefix("www.")
+            .removePrefix("*.")
+            .removePrefix(".")
             .trim('/')
+            .trim('.')
+        if (cleaned.isBlank()) return ""
+        return runCatching { IDN.toASCII(cleaned) }.getOrDefault(cleaned)
     }
 }

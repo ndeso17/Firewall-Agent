@@ -1301,17 +1301,21 @@ class MainActivity : AppCompatActivity() {
         val menu = PopupMenu(this, binding.toolMenuBtn)
         val toggleLabel = if (currentFirewallEnabled) "Disable Firewall Agent" else "Enable Firewall Agent"
         menu.menu.add(Menu.NONE, 1, 1, toggleLabel)
-        menu.menu.add(Menu.NONE, 3, 3, "Apply")
-        menu.menu.add(Menu.NONE, 5, 5, "ML Alerts")
-        menu.menu.add(Menu.NONE, 6, 6, "Rules")
-        menu.menu.add(Menu.NONE, 7, 7, "Settings")
-        menu.menu.add(Menu.NONE, 10, 10, "Traffic Monitor")
-        menu.menu.add(Menu.NONE, 19, 19, "RAM Optimizer")
-        menu.menu.add(Menu.NONE, 11, 11, "Call Guard")
-        menu.menu.add(Menu.NONE, 12, 12, "AdGuard DNS")
-        menu.menu.add(Menu.NONE, 13, 13, "Tor Connection")
-        menu.menu.add(Menu.NONE, 18, 18, "Evil Twin Detection")
-        menu.menu.add(Menu.NONE, 17, 17, "Security Stats")
+        val dynamicItems = listOf(
+            12 to "AdGuard DNS",
+            11 to "Call Guard",
+            18 to "Evil Twin Detection",
+            5 to "ML Alerts",
+            19 to "RAM Optimizer",
+            6 to "Rules",
+            17 to "Security Stats",
+            7 to "Settings",
+            13 to "Tor Connection",
+            10 to "Traffic Monitor",
+        ).sortedBy { it.second.lowercase() }
+        dynamicItems.forEachIndexed { idx, (id, title) ->
+            menu.menu.add(Menu.NONE, id, idx + 2, title)
+        }
         menu.setOnMenuItemClickListener { onMenuClicked(it) }
         menu.show()
     }
@@ -1338,15 +1342,22 @@ class MainActivity : AppCompatActivity() {
                         loading.updateProgress("Enable Firewall", 20, 100, "Mengaktifkan layanan root firewall...")
                         val enableResult = RootFirewallController.enable()
                         if (!enableResult.ok) return@runAction enableResult
-                        
-                        val (applyResult, summary) = RootFirewallController.applyAppRulesWithProgress(buildManagedRules()) { processed, total ->
+
+                        val managedRules = buildManagedRules()
+                        val (applyResult, summary) = RootFirewallController.applyAppRulesWithProgress(managedRules) { processed, total ->
                             val safeTotal = if (total <= 0) 1 else total
                             val percent = (20f + (processed.toFloat() / safeTotal.toFloat()) * 70f).roundToInt().coerceIn(20, 90)
                             runOnUiThread {
                                 loading.updateProgress("Enable Firewall", percent, 100, "Menyuntikkan rules ($processed/$total)...")
                             }
                         }
-                        mergeExecResults(enableResult, applyResult)
+                        val magiskSync = if (applyResult.ok && summary.failedUids == 0) {
+                            loading.updateProgress("Enable Firewall", 93, 100, "Sinkron modul Magisk rules...")
+                            RootFirewallController.syncMagiskRuleModule(managedRules)
+                        } else {
+                            ExecResult(0, "magisk_sync_skipped=apply_not_clean", "")
+                        }
+                        mergeExecResults(mergeExecResults(enableResult, applyResult), magiskSync)
                     }
                 }
                 true
@@ -1774,8 +1785,15 @@ class MainActivity : AppCompatActivity() {
                 NotifyHelper.postApplyProgress(this@MainActivity, 100, 100, totalApps)
             }
 
+            var magiskSync: ExecResult? = null
             if (result.ok && summary.failedUids == 0) {
                 saveRuleStateMap(desiredSignatures)
+                if (appInForeground) {
+                    updateApplyProgressDialog(96, 100, totalApps, "Sinkron modul Magisk rules...")
+                } else {
+                    NotifyHelper.postApplyProgress(this@MainActivity, 96, 100, totalApps)
+                }
+                magiskSync = withContext(Dispatchers.IO) { RootFirewallController.syncMagiskRuleModule(allRules) }
             }
 
             val serviceStatus = withContext(Dispatchers.IO) { RootFirewallController.status() }
@@ -1793,6 +1811,11 @@ class MainActivity : AppCompatActivity() {
                 appendLine("UID upsert: ${summary.restrictedUids}")
                 appendLine("Perubahan berhasil: ${summary.appliedUids}")
                 appendLine("Perubahan gagal: ${summary.failedUids}")
+                if (magiskSync != null) {
+                    appendLine("Magisk sync exit=${magiskSync.code}")
+                    if (magiskSync.stdout.isNotBlank()) appendLine(magiskSync.stdout)
+                    if (magiskSync.stderr.isNotBlank()) appendLine(magiskSync.stderr)
+                }
                 if (result.stdout.isNotBlank()) appendLine(result.stdout)
                 if (result.stderr.isNotBlank()) appendLine(result.stderr)
             }
