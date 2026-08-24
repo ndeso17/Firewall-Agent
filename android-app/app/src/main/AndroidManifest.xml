@@ -59,6 +59,16 @@
             android:exported="false"
             android:label="Evil Twin Detection"
             android:theme="@style/Theme.FirewallAgentRoot" />
+        <activity
+            android:name=".PentestActivity"
+            android:exported="false"
+            android:label="Security Network Analyze"
+            android:theme="@style/Theme.FirewallAgentRoot" />
+        <activity
+            android:name=".PentestLogActivity"
+            android:exported="false"
+            android:label="Pentest Log"
+            android:theme="@style/Theme.FirewallAgentRoot" />
 
         <service
             android:name=".FirewallCallScreeningService"

@@ -1304,7 +1304,7 @@ class MainActivity : AppCompatActivity() {
         val dynamicItems = listOf(
             12 to "AdGuard DNS",
             11 to "Call Guard",
-            18 to "Evil Twin Detection",
+            18 to "Security Network Analyze",
             5 to "ML Alerts",
             19 to "RAM Optimizer",
             6 to "Rules",
@@ -1372,7 +1372,7 @@ class MainActivity : AppCompatActivity() {
             12 -> { startActivity(Intent(this, AdGuardActivity::class.java)); true }
             13 -> { openTorEntry(); true }
             17 -> { startActivity(Intent(this, SecurityStatsActivity::class.java)); true }
-            18 -> { startActivity(Intent(this, EvilTwinActivity::class.java)); true }
+            18 -> { startActivity(Intent(this, PentestActivity::class.java)); true }
             else -> false
         }
     }

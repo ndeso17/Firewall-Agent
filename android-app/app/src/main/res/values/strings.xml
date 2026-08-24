@@ -25,6 +25,8 @@
     <!-- Evil Twin Detection -->
     <string name="evil_twin_title">Evil Twin Detection</string>
     <string name="evil_twin_description">Deteksi serangan Evil Twin AP</string>
+    <string name="pentest_title">Security Network Analyze</string>
+    <string name="pentest_description">Scan, klasifikasi keamanan, dan uji pentest jaringan</string>
     <string name="start_scan">Start Scan</string>
     <string name="stop_scan">Stop Scan</string>
     <string name="clear_results">Clear</string>

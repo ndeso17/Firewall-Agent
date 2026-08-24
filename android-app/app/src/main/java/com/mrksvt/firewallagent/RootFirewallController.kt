@@ -790,6 +790,9 @@ object RootFirewallController {
         return target.absolutePath
     }
 
+    /** Eksekusi perintah root apa pun (untuk WifiConnectEngine dkk). */
+    fun execRoot(cmd: String): ExecResult = runRoot(cmd)
+
     private fun runRoot(cmd: String): ExecResult {
         val escaped = cmd.replace("'", "'\"'\"'")
         val wrapped = "su -c '$escaped'"
