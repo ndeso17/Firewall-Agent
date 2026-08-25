@@ -27,12 +27,13 @@ android {
         }
     }
 
-    // Signing opsional: aktif hanya saat env keystore tersedia (CI/GitHub Actions).
-    // Lokal tanpa env → release unsigned (assembleRelease tetap jalan, tidak signed).
+    // Signing opsional: config "release" hanya dibuat jika env keystore tersedia (CI/GitHub Actions).
+    // Lokal / CI tanpa keystore → findByName("release") null → AGP fallback ke debug signing
+    // (APK release tetap ter-sign debug key, bisa di-install).
     signingConfigs {
-        create("release") {
-            val ksPath = System.getenv("KEYSTORE_FILE")
-            if (!ksPath.isNullOrBlank() && file(ksPath).exists()) {
+        val ksPath = System.getenv("KEYSTORE_FILE")
+        if (!ksPath.isNullOrBlank() && file(ksPath).exists()) {
+            create("release") {
                 storeFile = file(ksPath)
                 storePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
                 keyAlias = System.getenv("KEY_ALIAS") ?: ""
