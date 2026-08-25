@@ -51,33 +51,22 @@ jobs:
 
       - name: Locate APKs
         run: |
-          echo "=== Debug output ==="
+          echo "=== APK files ==="
           find android-app/app/build/outputs/apk -name "*.apk" -type f 2>/dev/null || echo "no apk dir"
-          echo "=== Release output ==="
-          ls -la android-app/app/build/outputs/apk/publik/release/ 2>/dev/null || echo "release dir missing"
-          ls -la android-app/app/build/outputs/apk/publik/debug/ 2>/dev/null || echo "debug dir missing"
 
       - name: Prepare release assets
         run: |
           TAG="${GITHUB_REF_NAME}"
           mkdir -p release-assets
 
-          # Cari APK release (nama bisa beda: signed/unsigned)
           REL_APK=$(find android-app/app/build/outputs/apk/publik/release -name "*.apk" -type f 2>/dev/null | head -1)
           if [ -n "$REL_APK" ]; then
             cp "$REL_APK" "release-assets/FirewallAgent-${TAG}-publik.apk"
-            echo "release apk: $REL_APK"
-          else
-            echo "!! release apk not found"
           fi
 
-          # Cari APK debug
           DBG_APK=$(find android-app/app/build/outputs/apk/publik/debug -name "*.apk" -type f 2>/dev/null | head -1)
           if [ -n "$DBG_APK" ]; then
             cp "$DBG_APK" "release-assets/FirewallAgent-${TAG}-debug.apk"
-            echo "debug apk: $DBG_APK"
-          else
-            echo "!! debug apk not found"
           fi
 
           cd module
@@ -88,12 +77,26 @@ jobs:
       - name: Verify assets
         run: ls -lh release-assets/
 
-      - name: Upload artifacts (manual run)
+      - name: Upload publik APK (manual)
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
-          name: firewall-agent-build
-          path: release-assets/
+          name: FirewallAgent-${{ github.ref_name }}-publik
+          path: release-assets/FirewallAgent-${{ github.ref_name }}-publik.apk
+
+      - name: Upload debug APK (manual)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FirewallAgent-${{ github.ref_name }}-debug
+          path: release-assets/FirewallAgent-${{ github.ref_name }}-debug.apk
+
+      - name: Upload magisk module (manual)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FirewallAgent-${{ github.ref_name }}-magisk
+          path: release-assets/FirewallAgent-${{ github.ref_name }}-magisk.zip
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
